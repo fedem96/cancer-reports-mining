@@ -1,33 +1,27 @@
 import argparse
 
 from utils.constants import *
-from utils.idf import train, save
-from utils.preprocessing import preprocess
+from utils.idf import InverseFrequenciesCounter
 from utils.utilities import *
 
 
 parser = argparse.ArgumentParser(description='Calculate Inverse Document Frequencies and save to file')
-parser.add_argument("-d", "--documents", help="documents", default=TRAINING_SET_FILE, type=str)
-parser.add_argument("-o", "--output", help="file where to save IDF", default=IDF_FILE, type=str)
+parser.add_argument("-d", "--dataset", help="directory of the dataset", required=True, type=str)
+parser.add_argument("-t", "--training", help="training set filename", default=TRAINING_SET, type=str)
+parser.add_argument("-o", "--output", help="filename where to save IDF", default=IDF, type=str)
 args = parser.parse_args()
 
-csv = [args.documents,
+csv = [os.path.join(args.dataset, args.training),
     "utf-8",
-    {"id_neopl": float, "lateralita": str, "grading": int, "livello_certezza": int, "stadio": int, "terapia": int, "dimensioni": float, "linfoadenec": int, "anno": str, "notizie": str, "diagnosi": str, "macroscopia": str},
+    {"id_neopl": "Int64", "notizie": str, "diagnosi": str, "macroscopia": str},
     {},
-    {"anno": "%Y"},
+    {},
     {"notizie": "", "diagnosi": "", "macroscopia": ""}
     ]
 
 
 df = read_csv(*csv)
 
-num_docs = len(df)
+texts = merge_and_extract(df, ["notizie", "diagnosi", "macroscopia"])
 
-texts = []
-for n, d, m in zip(df["notizie"], df["diagnosi"], df["macroscopia"]):
-    text = n + " " + d + " " + m
-    texts.append(text)
-
-idf = train(texts)
-save(idf)
+InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset, args.output))

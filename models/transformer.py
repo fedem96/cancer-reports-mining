@@ -1,15 +1,19 @@
 import math
+
 import torch
 import torch.nn as nn
+from torch.nn.utils.rnn import pad_sequence
 
 from layers.positional_encoding import PositionalEncoding
 from models.modular_base import ModularBase
+from utils.utilities import Chronometer
 
 
 class Transformer:
 
     def __init__(self, vocab_size, embedding_dim, num_heads, deep_features, nlayers, dropout):
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        print("device:", device)
         self.model = ModularBase(vocab_size, embedding_dim, deep_features).to(device)
         self.model.extract_features = self.extract_features
 
@@ -25,10 +29,10 @@ class Transformer:
         # self.init_weights()
 
 
-    def _generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
+    # def _generate_square_subsequent_mask(self, sz):
+    #     mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+    #     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    #     return mask
 
     # def init_weights(self):
     #     initrange = 0.1
@@ -51,25 +55,40 @@ class Transformer:
     def __getattr__(self, *args):
         return self.model.__getattribute__(*args)
 
+    # def n_extract_features(self, x): # this is the version with padding
+    #     batch_size = len(x)
+    #
+    #     sizes = [len(t) for t in x]
+    #     target = torch.zeros(batch_size, 1, self.model.deep_features).to(self.model.current_device())
+    #     emb_dim_sqrt = math.sqrt(self.model.emb.embedding_dim)
+    #     batch_embs = pad_sequence((self.model.emb(torch.cat(x).long()) * emb_dim_sqrt).split(sizes), batch_first=True)
+    #     batch_embs = self.pos_encoder(batch_embs)
+    #     batch_embs = self.transformer_encoder(batch_embs)
+    #     return self.transformer_decoder(target, batch_embs).squeeze()
+
     def extract_features(self, x):
         # batch_size = len(x)
 
         sizes = [len(t) for t in x]
-        x = torch.cat(x)
+        x = torch.cat(x).long()
 
-        batch_embs = self.model.emb(x).split(sizes)
+        emb_dim_sqrt = math.sqrt(self.model.emb.embedding_dim)
+        batch_embs = (self.model.emb(x) * emb_dim_sqrt).split(sizes)
         out = []
 
+        target = torch.zeros(1, 1, self.model.deep_features).to(self.model.current_device())
+
         for words_embs in batch_embs:
-            mask = self._generate_square_subsequent_mask(len(words_embs)).to(self.model.current_device())
-            embs = words_embs * math.sqrt(self.model.emb.embedding_dim)
-            embs = self.pos_encoder(embs.unsqueeze(0))
+            #mask = self._generate_square_subsequent_mask(len(words_embs)).to(self.model.current_device())
+            embs = self.pos_encoder(words_embs.unsqueeze(0))
+
             #embs = self.transformer_encoder(embs, mask)
             embs = self.transformer_encoder(embs)
-            num_outputs = len(self.model.classifiers) + len(self.model.regressors)
-            target = torch.zeros(1, 1, self.model.deep_features)
+
+            #num_outputs = len(self.model.classifiers) + len(self.model.regressors)
             sequence_emb = self.transformer_decoder(target, embs)
             out.append(sequence_emb.squeeze())
+        #out = [self.transformer_decoder(target, self.transformer_encoder(self.pos_encoder(words_emb.unsqueeze(0)))).squeeze() for words_emb in batch_embs]
 
         return torch.stack(out)
 

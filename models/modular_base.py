@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.optim import Adam, SGD
 
 from utils.metrics_logger import MetricsLogger
+from utils.utilities import Chronometer
 
 
 class ModularBase(nn.Module):
@@ -36,23 +37,23 @@ class ModularBase(nn.Module):
     def extract_features(self, x):
         pass
 
-    def fit(self, data, labels, num_epochs, batch_size):
-        data = [torch.tensor(t, device=self.current_device()) for t in data]
+    def fit(self, train_data, train_labels, num_epochs, batch_size, val_data=None, val_labels=None):
+        train_data = [torch.tensor(t, device=self.current_device()) for t in train_data]
+        if val_data is not None:
+            val_data = [torch.tensor(t, device=self.current_device()) for t in val_data]
         self.optimizer = Adam(self.parameters(), lr=10 ** -3)
 
-        # TODO: split by year
-        perm = np.random.permutation(len(data))
-        data = [data[d] for d in perm]
-        labels = labels.iloc[perm].reset_index(drop=True)
-        index_val = int(len(data) * 0.8)
-        train_data, val_data = data[:index_val], data[index_val:]
-        train_labels, val_labels = labels.iloc[:index_val].reset_index(drop=True), labels.iloc[index_val:].reset_index(drop=True)
+        # TODO: handle hyperparameters
+        perm = np.random.permutation(len(train_data))
+        train_data = [train_data[d] for d in perm]
+        train_labels = train_labels.iloc[perm].reset_index(drop=True)
 
         num_batches = len(train_data) // batch_size
         logger = self.logger
         for epoch in range(num_epochs):
             start = timer()
             perm = np.random.permutation(len(train_data))
+            # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
             train_data = [train_data[d] for d in perm]
             train_labels = train_labels.iloc[perm].reset_index(drop=True)
             logger.prepare(epoch, {"Loss": min, "Accuracy": max, "MAE": min})
@@ -61,10 +62,12 @@ class ModularBase(nn.Module):
                 batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
                 losses, accuracies, maes = self.train_step(batch, batch_labels)
                 logger.accumulate_train({"Loss": losses, "Accuracy": accuracies, "MAE": maes}, num_batches)
-            losses, accuracies, maes = self.train_step(val_data, val_labels, False)
-            logger.accumulate_val({"Loss": losses, "Accuracy": accuracies, "MAE": maes})
+            if val_data is not None:
+                losses, accuracies, maes = self.train_step(val_data, val_labels, False)
+                logger.accumulate_val({"Loss": losses, "Accuracy": accuracies, "MAE": maes})
             logger.log()
             print("time", (timer()-start))
+        return logger
 
     def train_step(self, data, labels, training=True):
         if training:
@@ -84,22 +87,24 @@ class ModularBase(nn.Module):
             if mask.sum() == 0:
                 continue
             preds = predictions[var][mask]
-            grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device)
+            grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
             loss = self.ce(preds, grth)
             losses[var] = loss.item()
             total_loss += loss
-            accuracies[var] = (torch.argmax(preds, axis=1) == grth).float().mean().item()
+            # accuracies[var] = (torch.argmax(preds, axis=1) == grth).float().mean().item()
+            accuracies[var] = (torch.argmax(preds.detach(), axis=1) == grth).float().mean().item()
 
         for var in self.regressors:
             mask = ~labels[var].isnull()
             if mask.sum() == 0:
                 continue
             preds = predictions[var][mask].squeeze(1)
-            grth = torch.tensor(labels[var][mask].to_list(), device=device)
+            grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
             loss = self.l2(preds, grth)
             losses[var] = loss.item()
             total_loss += loss
-            maes[var] = (preds - grth).abs().mean().item()
+            # maes[var] = (preds - grth).abs().mean().item()
+            maes[var] = (preds.detach() - grth).abs().mean().item()
 
         if training:
             total_loss.backward()

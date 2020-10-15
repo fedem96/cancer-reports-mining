@@ -50,10 +50,14 @@ class MetricsLogger:
             self._log_console_simple()
 
     def _log_console_simple(self):
-        out = "epoch " + str(self.epoch)
+        out = "epoch " + str(self.epoch) + "\ntrain:"
         for group in self.metrics_train:
             out += " " + group + dict_str(self.metrics_train[group])
-        print(out)
+        if len(self.metrics_val) > 0:
+            out += "\nval:"
+            for group in self.metrics_val:
+                out += " " + group + dict_str(self.metrics_val[group])
+        print(out + "\n")
 
     def _log_console_table(self):
 
@@ -84,5 +88,18 @@ class MetricsLogger:
                     values.pop(0)
                 rows.append([metric, *values, str_best])
 
-            print(generate_table(rows, columns, grid_style=AlternatingRowGrid(Back.RESET, Back.LIGHTWHITE_EX)))
+            print(generate_table(rows, columns, grid_style=AlternatingRowGrid(Back.RESET, Back.LIGHTBLACK_EX)))
+
+    def print_best(self, output_file=None):
+        out = "best values after " + str((1+self.epoch)) + " epochs\ntrain:"
+        for group in self.metrics_train:
+            out += " " + group + dict_str(self.best_train[group])
+        if len(self.metrics_val) > 0:
+            out += "\nval:"
+            for group in self.metrics_val:
+                out += " " + group + dict_str(self.best_val[group])
+        print(out + "\n")
+        if output_file is not None:
+            with open(output_file, "wt") as file:
+                file.write(out)
 

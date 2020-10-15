@@ -13,7 +13,7 @@ from utils.utilities import *
 #         handle_nans]
 
 parser = argparse.ArgumentParser(description='Clean and prepare the old dataset (the one with all cancer types)')
-parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", required=True, type=str)
+parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", default=os.path.join(DATASETS_DIR, OLD_DATASET), type=str)
 parser.add_argument("-i", "--histologies", help="histologies file", default=OLD_HISTOLOGIES_FILE, type=str)
 parser.add_argument("-n", "--neoplasms", help="neoplasms file", default=OLD_NEOPLASMS_FILE, type=str)
 args = parser.parse_args()

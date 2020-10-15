@@ -3,39 +3,28 @@ import json
 import numpy as np
 import spacy
 
-from utils.constants import INDEX_FILE
+from utils.preprocessing import Preprocessor
 
 
 class Tokenizer:
 
     def __init__(self, tokenizer='it'):
-        self._tknzr = spacy.load(tokenizer)
+        self._tknzr = spacy.load(tokenizer, disable=["tagger", "parser", "ner"])
+        self._tknzr.add_pipe(lambda doc: [str(token) for token in doc])
 
     def tokenize(self, text):
         tokens = self._tknzr(text)
         return tokens
 
     def tokenize_batch(self, texts):
-        tokens = []
-        for text in texts:
-            tokens.append(self.tokenize(text))
-        return tokens
-
-    @staticmethod
-    def token_to_string(token):
-        return str(token)
-
-    @staticmethod
-    def tokens_to_strings(tokens):
-        return [str(token) for token in tokens]
+        return list(self._tknzr.pipe(texts))
 
 
 class TokenCodec:
 
-    def __init__(self, coder={}, decoder={}, tokenizer='it'):
-        self.coder = {}
-        self.decoder = {}
-        self._tknzr = spacy.load(tokenizer)
+    def __init__(self, coder={}, decoder={}):
+        self.coder = coder
+        self.decoder = decoder
         assert len(self.coder) == len(self.decoder)
 
     def load(self, filename):
@@ -74,20 +63,17 @@ class TokenCodec:
 
 
 class TokenCodecCreator:
-    def __init__(self, preprocessor, tokenizer='it'):
+
+    def __init__(self, preprocessor=Preprocessor.get_default(), tokenizer='it'):
         self.preprocessor = preprocessor
         self.tokenizer = Tokenizer(tokenizer)
 
     def create_codec(self, texts):
         coder = {}
         decoder = {}
-        preprocess = self.preprocessor.preprocess
-        tokenize = self.tokenizer.tokenize
-        for count in range(len(texts)):
-            text = texts[count]
-            text = preprocess(text)
-            tokens = tokenize(text)
-            tokens = set(map(lambda token: str(token), tokens))
+        count = 0
+        tokens_batch = self.tokenizer.tokenize_batch(self.preprocessor.preprocess_batch(texts))
+        for tokens in tokens_batch:
             for token in tokens:
                 if token not in coder:
                     count += 1

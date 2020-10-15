@@ -1,16 +1,40 @@
 import re
 
-def preprocess(text):
 
-    text = text.lower()\
-        .replace("cm.", "cm ").replace("mm.", "mm ")\
-        .replace("\n", " ").replace("\t", " ").strip()
+class Preprocessor:
 
-    # change '\dx\d' with '\d x \d'
-    while (s := re.search("\dx\d", text)) is not None:
-        k = s.regs[0][0]+1
-        text = text[:k] + " x " + text[k+1:]
+    instance = None
 
-    # TODO: come gestire stringhe numeriche?
+    def __init__(self, str_replacements=[]):
+        self.str_replacements = str_replacements
 
-    return text
+    def preprocess(self, text):
+        text = text.lower()
+        for old, new in self.str_replacements:
+            text = text.replace(old, new)
+        text = text.strip()
+
+        #text = re.sub("\s{2,}", " ", text) # remove double whitespaces
+
+        # change '\dx\d' with '\d x \d'
+        new_text = ""
+        s = re.search("\dx\d", text)
+        while s is not None:   # TODO: generalize
+            k = s.regs[0][0]+1
+            new_text += text[:k] + " x "
+            text = text[k+1:]
+            s = re.search("\dx\d", text)
+        new_text += text
+
+        # TODO: handle numeric strings?
+        return new_text
+
+    def preprocess_batch(self, texts):
+        prep = self.preprocess
+        return [prep(text) for text in texts]
+
+    @staticmethod
+    def get_default():
+        if Preprocessor.instance is None:
+            Preprocessor.instance = Preprocessor([("cm.", "cm "), ("mm.", "mm "), ("\n", " "), ("\t", " ")])
+        return Preprocessor.instance
