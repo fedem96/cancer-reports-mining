@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import pandas as pd
@@ -11,12 +12,18 @@ from utils.utilities import *
 #         dates_format,
 #         handle_nans]
 
-csv1 = [os.path.join("train_data", "ISTOLOGIE_corr.csv"),
+parser = argparse.ArgumentParser(description='Clean and prepare the old dataset (the one with all cancer types)')
+parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", required=True, type=str)
+parser.add_argument("-i", "--histologies", help="histologies file", default=OLD_HISTOLOGIES_FILE, type=str)
+parser.add_argument("-n", "--neoplasms", help="neoplasms file", default=OLD_NEOPLASMS_FILE, type=str)
+args = parser.parse_args()
+
+csv1 = [args.histologies,
         "ISO-8859-1",
         {"id_neopl": 'Int64', "notizie": str, "diagnosi": str, "macroscopia": str}]
 
 
-csv2 = [os.path.join("train_data", "RTRT_NEOPLASI_corr.csv"),
+csv2 = [args.neoplasms,
         "ISO-8859-1",
         {"id_neopl": 'Int64', "stadio": 'Int64', "dimensioni": float, "sede_icdo3": str, "morfologia_icdo3": str},
         {},
@@ -49,9 +56,11 @@ dfUnsup = df1[df1["id_neopl"].isnull()]             # 1496896 samples
 dfUnsup = dfUnsup.drop(columns=["id_neopl"])
 # TODO: add an index to unsupervised csv
 
-dfTrain.to_csv(TRAINING_SET_FILE, index=False)
-dfTest.to_csv(TEST_SET_FILE, index=False)
-dfUnsup.to_csv(UNSUPERVISED_SET_FILE, index=False)
+if not os.path.exists(args.dataset_dir): os.makedirs(args.dataset_dir)
+
+dfTrain.to_csv(os.path.join(args.dataset_dir, TRAINING_SET), index=False)
+dfTest.to_csv(os.path.join(args.dataset_dir, TEST_SET), index=False)
+dfUnsup.to_csv(os.path.join(args.dataset_dir, UNSUPERVISED_SET), index=False)
 
 
 #df2["anno"].value_counts().sort_index().plot(kind="bar")
