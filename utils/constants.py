@@ -3,6 +3,8 @@ import os
 
 RAW_DIR = "data_raw"
 DATASETS_DIR = "datasets"
+MODELS_DIR = "models"
+CACHE_DIR = ".cache"
 
 OLD_DATASET = "all_cancer_types_2007"
 OLD_HISTOLOGIES_FILE = os.path.join(RAW_DIR, "ISTOLOGIE_corr.csv")

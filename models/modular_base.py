@@ -1,4 +1,5 @@
 from abc import abstractmethod
+import os
 from timeit import default_timer as timer
 
 import numpy as np
@@ -6,12 +7,12 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD
 
-from utils.metrics_logger import MetricsLogger
+from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
 from utils.utilities import Chronometer
 
 
 class ModularBase(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, deep_features):
+    def __init__(self, vocab_size, embedding_dim, deep_features, directory=None):
         super(ModularBase, self).__init__()
         self.emb = nn.Embedding(vocab_size, embedding_dim)
 
@@ -20,64 +21,103 @@ class ModularBase(nn.Module):
         self.classifiers = nn.ModuleDict({})
         self.regressors = nn.ModuleDict({})
 
-        self.ce = nn.CrossEntropyLoss()
-        self.l2 = nn.MSELoss()
-        self.logger = MetricsLogger(terminal='table', history_size=10)
+        # self.ce = nn.CrossEntropyLoss()
+        # self.l2 = nn.MSELoss()
+        self.losses = {}
+        self.dumb_baseline_train_accuracy = {}
+        self.dumb_baseline_val_accuracy = {}
+        self.num_classes = {}
+        if directory is not None and not os.path.exists(directory):
+            os.makedirs(directory)
+        tb_dir = directory and os.path.join(directory, "logs")
+        self.logger = MetricsLogger(terminal='table', tensorboard_dir=tb_dir, history_size=10)
 
     def current_device(self):
         return next(self.parameters()).device
 
     def forward(self, x):
-        features = self.extract_features(x)
-        classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
-        regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
-        return {**classes, **regressions}
+        with Chronometer("ef"): features = self.extract_features(x)
+        with Chronometer("c"): classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
+        with Chronometer("r"): regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
+        return {"features": features, **classes, **regressions}
 
     @abstractmethod
     def extract_features(self, x):
         pass
 
-    def fit(self, train_data, train_labels, num_epochs, batch_size, val_data=None, val_labels=None):
+    def update_losses(self, train_labels, val_labels):
+        self.losses = {}
+        self.dumb_baseline_train_accuracy = {}
+        self.dumb_baseline_val_accuracy = {}
+        self.num_classes = {}
+        for var in self.classifiers:
+            classes_occurrences = train_labels[var].value_counts().sort_index().values
+            self.num_classes[var] = len(classes_occurrences)
+            assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
+            classes_weights = sum(classes_occurrences) / classes_occurrences
+            classes_weights = torch.from_numpy(classes_weights).float().to(self.current_device())
+            self.losses[var] = nn.CrossEntropyLoss(classes_weights)
+            self.dumb_baseline_train_accuracy[var] = max(classes_occurrences) / sum(classes_occurrences)
+            y_val = val_labels[var].dropna()
+            self.dumb_baseline_val_accuracy[var] = (y_val == np.argmax(classes_occurrences)).sum() / len(y_val)
+        for var in self.regressors:
+            self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
+
+    def fit(self, train_data, train_labels, val_data=None, val_labels=None, **hyperparams):
+        self.update_losses(train_labels, val_labels)
+        # train_size, val_size = 8192, 8192
+        # train_data, train_labels = train_data[:train_size], train_labels.iloc[:train_size]
+        # val_data, val_labels = val_data[:val_size], val_labels.iloc[:val_size]
+
+        batch_size = hyperparams["batch_size"]
+        self.activation_penalty = hyperparams["activation_penalty"]
+        if "data_seed" in hyperparams:
+            np.random.seed(hyperparams["data_seed"])
+
         train_data = [torch.tensor(t, device=self.current_device()) for t in train_data]
         if val_data is not None:
             val_data = [torch.tensor(t, device=self.current_device()) for t in val_data]
-        self.optimizer = Adam(self.parameters(), lr=10 ** -3)
+        self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
-        # TODO: handle hyperparameters
-        perm = np.random.permutation(len(train_data))
-        train_data = [train_data[d] for d in perm]
-        train_labels = train_labels.iloc[perm].reset_index(drop=True)
-
-        num_batches = len(train_data) // batch_size
+        num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
         logger = self.logger
-        for epoch in range(num_epochs):
-            start = timer()
+        metrics = {"Loss": min, "Accuracy": max, "MAE": min, "M-F1": MacroF1Score, "CKS": CohenKappaScore, "DBCS": max}
+        for epoch in range(hyperparams["max_epochs"]):
+            logger.prepare(epoch, metrics)
             perm = np.random.permutation(len(train_data))
             # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
             train_data = [train_data[d] for d in perm]
             train_labels = train_labels.iloc[perm].reset_index(drop=True)
-            logger.prepare(epoch, {"Loss": min, "Accuracy": max, "MAE": min})
+
             for b in range(num_batches):
                 batch = train_data[b * batch_size: (b + 1) * batch_size]
                 batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                losses, accuracies, maes = self.train_step(batch, batch_labels)
-                logger.accumulate_train({"Loss": losses, "Accuracy": accuracies, "MAE": maes}, num_batches)
+                batch_metrics = self.train_step(batch, batch_labels)
+                logger.accumulate_train(batch_metrics, num_batches)
+
             if val_data is not None:
-                losses, accuracies, maes = self.train_step(val_data, val_labels, False)
-                logger.accumulate_val({"Loss": losses, "Accuracy": accuracies, "MAE": maes})
+                for b in range(num_val_batches):
+                    batch = val_data[b * batch_size: (b + 1) * batch_size]
+                    batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+                    batch_metrics = self.train_step(batch, batch_labels, False)
+                    logger.accumulate_val(batch_metrics, num_val_batches)
+
             logger.log()
-            print("time", (timer()-start))
-        return logger
+
+        return logger.close()
 
     def train_step(self, data, labels, training=True):
         if training:
             self.optimizer.zero_grad()
         torch.set_grad_enabled(training)
 
-        predictions = self(data)
+        forwarded = self(data)
         losses = {}
         accuracies = {}
         maes = {}
+        macro_f1 = {}
+        cks = {}
+        dbcs = {}
         device = self.current_device()
 
         total_loss = torch.tensor([0.0], device=self.current_device())
@@ -86,31 +126,35 @@ class ModularBase(nn.Module):
             mask = ~labels[var].isnull()
             if mask.sum() == 0:
                 continue
-            preds = predictions[var][mask]
+            preds = forwarded[var][mask]
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
-            loss = self.ce(preds, grth)
+            loss = self.losses[var](preds, grth)# / np.log2(self.num_classes[var])
             losses[var] = loss.item()
             total_loss += loss
-            # accuracies[var] = (torch.argmax(preds, axis=1) == grth).float().mean().item()
-            accuracies[var] = (torch.argmax(preds.detach(), axis=1) == grth).float().mean().item()
+            preds_classes = torch.argmax(preds.detach(), axis=1)
+            accuracies[var] = (preds_classes == grth).float().mean().item()
+            macro_f1[var] = [preds_classes, grth]
+            cks[var] = [preds_classes, grth]
+            dumb_baseline_accuracy = self.dumb_baseline_train_accuracy[var] if training else self.dumb_baseline_val_accuracy[var]
+            dbcs[var] = (accuracies[var] - dumb_baseline_accuracy) / (1 - dumb_baseline_accuracy)
 
         for var in self.regressors:
             mask = ~labels[var].isnull()
             if mask.sum() == 0:
                 continue
-            preds = predictions[var][mask].squeeze(1)
+            preds = forwarded[var][mask].squeeze(1)
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
-            loss = self.l2(preds, grth)
+            loss = self.losses[var](preds, grth)
             losses[var] = loss.item()
             total_loss += loss
-            # maes[var] = (preds - grth).abs().mean().item()
             maes[var] = (preds.detach() - grth).abs().mean().item()
 
+        total_loss += self.activation_penalty * forwarded["features"].abs().sum()
         if training:
             total_loss.backward()
             self.optimizer.step()
         torch.set_grad_enabled(False)
-        return losses, accuracies, maes
+        return {"Loss": losses, "Accuracy": accuracies, "MAE": maes, "M-F1": macro_f1, "CKS": cks, "DBCS": dbcs}
 
     def add_classification(self, task_name, num_classes):
         self.classifiers[task_name] = nn.Linear(self.deep_features, num_classes).to(self.current_device())

@@ -1,4 +1,6 @@
 import argparse
+from datetime import datetime
+from importlib import import_module
 from multiprocessing import Pool
 from timeit import default_timer as timer
 
@@ -11,15 +13,22 @@ from utils.tokenizing import TokenCodec, Tokenizer
 from utils.utilities import *
 
 parser = argparse.ArgumentParser(description='Train a model')
+parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0.00001, type=float)
+parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=115, type=int)
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
-parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
+parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=100, type=int)
+parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
+parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str)
+parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=str)
+parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
+parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
+parser.add_argument("-t", "--train-config", help="json with train configuration", default=os.path.join("configs", "train_example.json"), type=str)
 args = parser.parse_args()
 
 train_df = pd.read_csv(os.path.join(args.dataset_dir, TRAINING_SET))
 val_df = pd.read_csv(os.path.join(args.dataset_dir, VALIDATION_SET))
-test_df = pd.read_csv(os.path.join(args.dataset_dir, TEST_SET))
 cols = ["diagnosi", "macroscopia", "notizie"]
 
 p = Preprocessor.get_default()
@@ -28,101 +37,83 @@ tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
 
 print("tokenizing reports and encoding tokens")
 
-with Chronometer(1):
-    def f(report): return tc.encode(t.tokenize(p.preprocess(report)))
-    def df_to_data(dataframe):
-        replace_nulls(dataframe, {col: "" for col in cols})
-        reports = merge_and_extract(dataframe, cols)
 
-        with Pool(6) as pool:
-            data = pool.map(f, reports)  # since f is going to be pickled, I can't use a lambda
-        return data
+def full_pipe(report):
+    return tc.encode(t.tokenize(p.preprocess(report)))
 
-    train, val, test = [df_to_data(dataframe) for dataframe in [train_df, val_df, test_df]]
+
+train, val = [caching(df_to_data, dataframe, full_pipe, cols) for dataframe in [train_df, val_df]]
 
 print("encoding reports")
-
-with Chronometer(2):
-    with open("configs/train_example.json", "rt") as file:
-        train_config = json.load(file)
+with open(args.train_config, "rt") as file:
+    train_config = json.load(file)
 
 
-    classifications, regressions = train_config.get("classifications", {}), train_config.get("regressions", {})
-    transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
+classifications, regressions = train_config.get("classifications", []), train_config.get("regressions", [])
+transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
 
 
-    def prepare_dataset(dataset, train_config):
-        classifications, regressions = train_config.get("classifications", {}), train_config.get("regressions", {})
-        transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
-        for column in classifications:
-            if column in transformations:
-                for transf in transformations[column]:
-                    ty = transf["type"]
-                    if ty == "regex_sub":
-                        for s in transf["subs"]:
-                            regex = re.compile(s[0], re.I)
-                            dataset[column] = dataset[column].apply(lambda v: s[1] if regex.match(str(v)) else v)
-                            #dataset.loc[dataset.index[dataset[column].apply(lambda v: None != regex.match(str(v)))], column] = s[1]
-                    elif ty == "filter":
-                        dataset.loc[dataset.index[dataset[column].apply(lambda v: v not in transf["valid_set"])], column] = np.NaN
-                    else:
-                        raise ValueError("invalid transformation '{}' for classification problem".format(ty))
-            # dataset[column] = columns_codec[column].encode_batch(dataset[column])
+for df in[train_df, val_df]: prepare_dataset(df, train_config)
+columns_codec = get_columns_codec(train_df, train_config)
 
 
-    def get_columns_codec(dataset, train_config):
-        classifications = train_config.get("classifications", {})
-        for column in classifications:
-            if column not in mappings:
-                mappings[column] = sorted(dataset[column].dropna().unique())
-        return LabelsCodec().from_mappings(mappings)
+train_labels, val_labels = [get_encoded_labels(dataset, classifications + regressions, classifications, columns_codec)
+                                                            for dataset in [train_df, val_df]]
 
-
-    for df in[train_df, val_df, test_df]: prepare_dataset(df, train_config)
-    columns_codec = get_columns_codec(train_df, train_config)
-
-
-with Chronometer(3):
-    def get_encoded_labels(dataset, columns, columns_to_encode):
-        labels = dataset[columns]
-        for column in columns_to_encode:
-            labels[column] = columns_codec[column].encode_batch(labels[column])
-        return labels
-
-
-    train_labels, val_labels, test_labels = [get_encoded_labels(dataset, classifications + regressions, classifications)
-                                                                for dataset in [train_df, val_df, test_df]]
-
-print("creating model")
-# model
-# from models.emb_max_fc import EmbMaxLin
-# model = EmbMaxLin(tc.num_tokens()+1, 256, 256, 256)
-from models.transformer import Transformer
-# model = Transformer(tc.num_tokens()+1, 256, 8, 256, 1, 0.1)
-model = Transformer(tc.num_tokens()+1, 128, 8, 128, 1, 0.1)
-for cls_var in classifications:
-    model.add_classification(cls_var, train_df[cls_var].nunique())
-
-for reg_var in regressions:
-    model.add_regression(reg_var)
-
-print("begin training")
-train = train[:4096]
-train_labels = train_labels.iloc[:4096]
-val = val[:1024]
-val_labels = val_labels.iloc[:1024]
-
+print("train labels distribution:")
 for column in train_labels.columns:
     print(train_labels[column].value_counts())
     print()
 
-model.fit(train, train_labels, 3, 64, val, val_labels).print_best("prova.txt")
-# model.fit(train, train_labels, 3, 64).print_best()
+print("creating model")
+model_name = args.name or str(datetime.now())
+model_dir = os.path.join(MODELS_DIR, model_name)
+os.makedirs(model_dir)
+
+with open(os.path.join(model_dir, "train_config.json"), "wt") as file:
+    json.dump(train_config, file)
+with open(os.path.join(model_dir, "args.json"), "wt") as file:
+    json.dump(vars(args), file)
+
+# model
+# from models.emb_max_fc import EmbMaxLin
+# model = EmbMaxLin(tc.num_tokens()+1, 256, 256, 256)
+#from models.transformer import Transformer
+# model = Transformer(tc.num_tokens()+1, 256, 8, 256, 1, 0.1)
+#model = Transformer(tc.num_tokens()+1, 128, 8, 128, 1, 0.1, model_dir)
+
+module, class_name = args.model.rsplit(".", 1)
+Model = getattr(import_module(module), class_name)
+model_args = {"vocab_size": tc.num_tokens()+1, "directory": model_dir}
+if args.model_args is not None:
+    with open(args.model_args, "rt") as file:
+        model_args.update(json.load(file))
+model = Model(**model_args)
+
+for cls_var in classifications:
+    model.add_classification(cls_var, train_df[cls_var].nunique())
+
+# for reg_var in regressions:
+#     model.add_regression(reg_var)
+
+print("parameters:", sum([p.numel() for p in model.parameters()]))
+for parameters in model.parameters():
+    print("\t{}: {}".format(parameters.name, parameters.numel()))
+print("begin training")
+#plot_hists([[len(t) for t in train]])
+max_length = 90
+train, val = [t[:max_length] for t in train], [v[:max_length] for v in val]  # truncate long sequences
+#plot_hists([[len(t) for t in train]])
+
+hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty}
+hyperparameters.update({"max_epochs": args.epochs, "batch_size": args.batch_size})
+with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
+    json.dump(hyperparameters, file)
+model.fit(train, train_labels, val, val_labels, **hyperparameters).print_best(args.out)
 print("done")
 
 # TODO: add transformations
 # TODO: clean code and apis
 # TODO: speedup script
-# TODO: save train config
 # TODO: speedup model
 # TODO: experiment

@@ -1,7 +1,8 @@
+colorama
 pandas
-torch==1.6.0
+matplotlib
 numpy
 spacy
-matplotlib
 tableformatter
-colorama
+tensorboard
+torch
