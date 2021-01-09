@@ -1,17 +1,7 @@
 from datetime import datetime
-import json
-import hashlib
-from inspect import signature
-from multiprocessing import Pool
-import pickle
-import re
-from timeit import default_timer as timer
 
 import numpy as np
 import pandas as pd
-
-from utils.constants import *
-from utils.labels_codec import LabelsCodec
 
 
 def _convert_date(date_str, format):
@@ -53,18 +43,29 @@ def train_test_split(df, year_column, test_from_year):
     return dfTrain, dfTest
 
 
-class Chronometer:
-    def __init__(self, identifier):
-        self.identifier = identifier
+def bar(values, output_file=None):
+    import matplotlib.pyplot as plt
+    from collections import Counter
 
-    def __enter__(self):
-        self.start = timer()
+    fig, axes = plt.subplots(1, 1)
 
-    def __exit__(self, *args):
-        #print("elapsed time ({}): {}".format(self.identifier, (timer() - self.start)))
-        pass
+    counts = Counter(values)
 
-def plot_hist_from_columns(df, columns, threshold=0, sort_by_index=False, plot_kind="bar"):
+    xs = counts.keys()
+    heights = [counts[x] for x in xs]
+    axes.bar(xs, heights)
+
+    if output_file is None:
+        plt.show()
+    else:
+        plt.savefig(output_file)
+        plt.clf()
+
+def plot_bar(df, column, counts_threshold=0, sort_by_index=True, output_file=None):
+    plot_bars(df, [column], counts_threshold, sort_by_index, output_file)
+
+
+def plot_bars(df, columns, counts_threshold=0, sort_by_index=True, output_file=None):
     import matplotlib.pyplot as plt
     import math
 
@@ -74,10 +75,9 @@ def plot_hist_from_columns(df, columns, threshold=0, sort_by_index=False, plot_k
     fig, axes = plt.subplots(nrow, ncol)
 
     for col in range(len(columns)):
-        column = columns[col]
         r = col // ncol
         c = col % ncol
-        counts = df[column].value_counts()
+        counts = df[columns[col]].dropna().astype(str).value_counts()
         if sort_by_index:
             counts = counts.sort_index()
 
@@ -87,12 +87,21 @@ def plot_hist_from_columns(df, columns, threshold=0, sort_by_index=False, plot_k
         if nrow > 1:
             ax = axes[r, c]
 
-        counts[counts > threshold].dropna().plot(kind=plot_kind, ax=ax)
+        counts[counts > counts_threshold].dropna().plot(kind="bar", ax=ax)
+        ax.set_title(columns[col])
 
-    plt.show()
+    if output_file is None:
+        plt.show()
+    else:
+        plt.savefig(output_file)
+        plt.clf()
 
 
-def plot_hists(columns):
+def plot_hist(df, column, output_file=None):
+    plot_hists(df, [column], output_file)
+
+
+def plot_hists(df, columns, output_file=None):
     import matplotlib.pyplot as plt
     import math
 
@@ -102,9 +111,9 @@ def plot_hists(columns):
     fig, axes = plt.subplots(nrow, ncol)
 
     for col in range(len(columns)):
-        column = columns[col]
         r = col // ncol
         c = col % ncol
+        column = df[columns[col]].dropna()
 
         ax = axes
         if len(columns) > 1 and nrow == 1:
@@ -112,71 +121,12 @@ def plot_hists(columns):
         if nrow > 1:
             ax = axes[r, c]
 
-        ax.hist(column, bins=range(min(column), max(column)+1))
+        if len(column) > 0:
+            ax.hist(column, bins=range(math.floor(min(column)), math.ceil(max(column))))
+            ax.set_title(columns[col])
 
-    plt.show()
-
-
-def df_to_data(dataframe, pipeline, cols):
-    replace_nulls(dataframe, {col: "" for col in cols})
-    reports = merge_and_extract(dataframe, cols)
-
-    with Pool(6) as pool:
-        data = pool.map(pipeline, reports)  # since pipeline is going to be pickled, I can't use a lambda
-    return data
-
-
-def prepare_dataset(dataset, train_config):
-    classifications, regressions = train_config.get("classifications", {}), train_config.get("regressions", {})
-    transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
-    for column in classifications:
-        if column in transformations:
-            for transf in transformations[column]:
-                ty = transf["type"]
-                if ty == "regex_sub":
-                    for s in transf["subs"]:
-                        regex = re.compile(s[0], re.I)
-                        dataset[column] = dataset[column].apply(lambda v: s[1] if regex.match(str(v)) else v)
-                        #dataset.loc[dataset.index[dataset[column].apply(lambda v: None != regex.match(str(v)))], column] = s[1]
-                elif ty == "filter":
-                    dataset.loc[dataset.index[dataset[column].apply(lambda v: v not in transf["valid_set"])], column] = np.NaN
-                else:
-                    raise ValueError("invalid transformation '{}' for classification problem".format(ty))
-        # dataset[column] = columns_codec[column].encode_batch(dataset[column])
-
-
-def get_columns_codec(dataset, train_config):
-    classifications, mappings = train_config.get("classifications", {}), train_config.get("mappings", {})
-    for column in classifications:
-        if column not in mappings:
-            mappings[column] = sorted(dataset[column].dropna().unique())
-    return LabelsCodec().from_mappings(mappings)
-
-
-def get_encoded_labels(dataset, columns, columns_to_encode, columns_codec):
-    labels = dataset[columns].copy()
-    for column in columns_to_encode:
-        labels[column] = columns_codec[column].encode_batch(labels[column])
-    return labels
-
-
-def caching(function, *args):
-    if not os.path.exists(CACHE_DIR):
-        os.makedirs(CACHE_DIR)
-        print("creating cache dir")
-
-    def _obj_to_hex(o):
-        return "&".join([o.__module__, o.__qualname__, str(signature(o)), str(o.__defaults__), str(o.__kwdefaults__)]) if callable(o) else str(o)
-
-    hex_digest = hashlib.sha256(bytes(str([_obj_to_hex(arg) for arg in args]), "utf-8")).hexdigest()
-    file_cache = os.path.join(CACHE_DIR, hex_digest)
-    if not os.path.exists(file_cache):
-        print("calculating result")
-        result = function(*args)
-        with open(file_cache, "wb") as file:
-            pickle.dump(result, file)
+    if output_file is None:
+        plt.show()
     else:
-        print("loading result from cache")
-        with open(file_cache, "rb") as file:
-            result = pickle.load(file)
-    return result
+        plt.savefig(output_file)
+        plt.clf()

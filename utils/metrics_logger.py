@@ -1,6 +1,7 @@
 import inspect
 from collections import defaultdict
 import os
+import numpy as np
 from timeit import default_timer as timer
 
 from tableformatter import generate_table, AlternatingRowGrid
@@ -170,10 +171,10 @@ class MacroF1Score(Metric):
     def update(self, preds, grth):
         correct = preds == grth
         wrong = ~correct
-        for cls in preds.unique().cpu().numpy():
+        for cls in np.unique(preds):
             self.TP[cls] += (correct & (preds == cls)).sum().item()
             self.FP[cls] += (wrong & (preds == cls)).sum().item()
-        for cls in grth.unique().cpu().numpy():
+        for cls in np.unique(grth):
             self.FN[cls] += (wrong & (grth == cls)).sum().item()
 
     def __call__(self, *args, **kwargs):
@@ -200,11 +201,11 @@ class CohenKappaScore(Metric):
         self.num_correct += (preds == grth).sum().item()
         self.tot += len(grth)
 
-        values, counts = preds.unique(return_counts=True)
+        values, counts = np.unique(preds, return_counts=True)
         for v, c in zip(values, counts):
             self.tot_preds[v.item()] += c.item()
 
-        values, counts = grth.unique(return_counts=True)
+        values, counts = np.unique(grth, return_counts=True)
         for v, c in zip(values, counts):
             self.tot_grth[v.item()] += c.item()
 

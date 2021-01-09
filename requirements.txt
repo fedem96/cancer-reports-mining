@@ -1,7 +1,8 @@
 colorama
-pandas
 matplotlib
 numpy
+pandas
+pandasql
 spacy
 tableformatter
 tensorboard

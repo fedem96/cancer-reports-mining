@@ -7,12 +7,12 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD
 
+from utils.chrono import Chronometer
 from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
-from utils.utilities import Chronometer
 
 
 class ModularBase(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, deep_features, directory=None):
+    def __init__(self, vocab_size, embedding_dim, deep_features, reduce=None, directory=None):
         super(ModularBase, self).__init__()
         self.emb = nn.Embedding(vocab_size, embedding_dim)
 
@@ -27,6 +27,19 @@ class ModularBase(nn.Module):
         self.dumb_baseline_train_accuracy = {}
         self.dumb_baseline_val_accuracy = {}
         self.num_classes = {}
+
+        self.reduce_mode = reduce
+        if reduce is None:
+            self.forward = self.forward_simple
+        else:
+            if type(reduce) != list and type(reduce) != tuple:
+                reduce = [reduce]
+            reduce_dict = {"max": lambda *args, **kwargs: torch.max(*args, **kwargs).values, "mean": torch.mean,
+                           "median": lambda *args, **kwargs: torch.median(*args, **kwargs).values, "prod": torch.prod,
+                           "std": torch.std, "sum": torch.sum}
+            self.reducers = [reduce_dict[reduce_mode] for reduce_mode in reduce]
+            self.forward = self.forward_group
+
         if directory is not None and not os.path.exists(directory):
             os.makedirs(directory)
         tb_dir = directory and os.path.join(directory, "logs")
@@ -36,7 +49,22 @@ class ModularBase(nn.Module):
         return next(self.parameters()).device
 
     def forward(self, x):
+        pass
+
+    def forward_simple(self, x):
         with Chronometer("ef"): features = self.extract_features(x)
+        with Chronometer("c"): classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
+        with Chronometer("r"): regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
+        return {"features": features, **classes, **regressions}
+
+    def forward_group(self, x):
+        with Chronometer("ef"):
+            features_list = []
+            for group in x:
+                group_all_features = self.extract_features(group)
+                group_features = torch.cat([reducer(group_all_features, dim=0) for reducer in self.reducers])
+                features_list.append(group_features)
+            features = torch.stack(features_list)
         with Chronometer("c"): classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         with Chronometer("r"): regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
         return {"features": features, **classes, **regressions}
@@ -74,9 +102,15 @@ class ModularBase(nn.Module):
         if "data_seed" in hyperparams:
             np.random.seed(hyperparams["data_seed"])
 
-        train_data = [torch.tensor(t, device=self.current_device()) for t in train_data]
-        if val_data is not None:
-            val_data = [torch.tensor(t, device=self.current_device()) for t in val_data]
+        if self.reduce_mode is None:
+            train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
+            if val_data is not None:
+                val_data = [torch.tensor(report, device=self.current_device()) for report in val_data]
+        else:
+            train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
+            if val_data is not None:
+                val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
+
         self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
         num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
@@ -129,12 +163,12 @@ class ModularBase(nn.Module):
             preds = forwarded[var][mask]
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
             loss = self.losses[var](preds, grth)# / np.log2(self.num_classes[var])
-            losses[var] = loss.item()
+            losses[var] = loss.detach().item()
             total_loss += loss
             preds_classes = torch.argmax(preds.detach(), axis=1)
-            accuracies[var] = (preds_classes == grth).float().mean().item()
-            macro_f1[var] = [preds_classes, grth]
-            cks[var] = [preds_classes, grth]
+            accuracies[var] = (preds_classes == grth).float().mean().detach().item()
+            macro_f1[var] = [preds_classes.cpu().numpy(), grth.cpu().numpy()]
+            cks[var] = [preds_classes.cpu().numpy(), grth.cpu().numpy()]
             dumb_baseline_accuracy = self.dumb_baseline_train_accuracy[var] if training else self.dumb_baseline_val_accuracy[var]
             dbcs[var] = (accuracies[var] - dumb_baseline_accuracy) / (1 - dumb_baseline_accuracy)
 

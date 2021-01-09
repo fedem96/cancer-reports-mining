@@ -6,10 +6,10 @@ from models.modular_base import ModularBase
 
 
 class EmbMaxLin:
-    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, directory=None):
+    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, reduce=None, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
+        self.model = ModularBase(vocab_size, embedding_dim, deep_features, reduce, directory).to(device)
         self.model.extract_features = self.extract_features
 
         if tuple != type(num_filters) != list:
@@ -29,25 +29,30 @@ class EmbMaxLin:
     def extract_features(self, x):
         # batch_size = len(x)
 
-        sizes = [len(t) for t in x]
-        x = torch.cat(x)
+        # records_sizes = [len(record) for record in x]
+        # reports_lengths = [len(report) for record in x for report in record]
+        # x_tensor = torch.cat([torch.cat(record) for record in x])
 
-        batch_embs = self.model.emb(x).split(sizes)
-        # out = []
+        reports_lengths = [len(t) for t in x]
+        x_tensor = torch.cat(x)
+
+        deep_words = self.model.emb(x_tensor)
+        reports_list = deep_words.split(reports_lengths)
+        # deep_reports = []
         #
-        # for words_embs in batch_embs:
+        # for words_embs in reports_list:
         #     # for conv in self.convs:
         #     #     words_embs = F.relu(conv(words_embs.transpose(0, 1).unsqueeze(0)).squeeze(0))
         #     sequence_emb = torch.max(self.convs(words_embs.transpose(0, 1).unsqueeze(0)).squeeze(0), 1)
-        #     out.append(sequence_emb.values)
+        #     deep_reports.append(sequence_emb.values)
         #
-        # return F.relu(torch.stack(out))
+        # return F.relu(torch.stack(deep_reports))
 
-        ### padded version: requires more memory (~3-5x) and it's overall slower (~2-30x),
-        ### due to slower (~3-50x) backprop (even if forward is faster ~3-5x) [tried with 5 variables to predict].
-        ### With bigger batch_size is more worse
-        ### Maybe we can leverage this implementation by making batches of sequences of similar length
-        padded = nn.utils.rnn.pad_sequence(batch_embs)
-        out = self.model.convs(padded.permute([1, 2, 0])).max(dim=2).values
-        # return out
-        return F.relu(self.model.fc(F.relu(out)))
+        reports = nn.utils.rnn.pad_sequence(reports_list, batch_first=True).permute([0, 2, 1])
+        deep_reports = self.model.convs(reports).max(dim=2).values
+        return F.relu(self.model.fc(F.relu(deep_reports)))
+
+        # records_list = deep_reports.split(records_sizes)
+        # records = nn.utils.rnn.pad_sequence(records_list, batch_first=True).permute([0, 2, 1])
+        # deep_records = records.max(dim=2).values
+        # return deep_records

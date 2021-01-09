@@ -6,15 +6,14 @@ from torch.nn.utils.rnn import pad_sequence
 
 from layers.positional_encoding import PositionalEncoding
 from models.modular_base import ModularBase
-from utils.utilities import Chronometer
 
 
 class Transformer:
 
-    def __init__(self, vocab_size=None, embedding_dim=128, deep_features=128, dropout=0, num_heads=1, n_layers=1, directory=None):
+    def __init__(self, vocab_size=None, embedding_dim=128, deep_features=128, dropout=0, num_heads=1, n_layers=1, reduce=None, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
+        self.model = ModularBase(vocab_size, embedding_dim, deep_features, reduce, directory).to(device)
         self.model.extract_features = self.extract_features
 
         self.src_mask = None
@@ -61,7 +60,7 @@ class Transformer:
         batch_size = len(x)
 
         sizes = [len(t) for t in x]
-        target = torch.zeros(batch_size, 1, self.model.deep_features).to(self.model.current_device())
+        # target = torch.zeros(batch_size, 1, self.model.deep_features).to(self.model.current_device())
         emb_dim_sqrt = math.sqrt(self.model.emb.embedding_dim)
         batch_embs = pad_sequence((self.model.emb(torch.cat(x).long()) * emb_dim_sqrt).split(sizes), batch_first=True)
         batch_embs = self.model.pos_encoder(batch_embs)

@@ -3,7 +3,7 @@ import os
 
 RAW_DIR = "data_raw"
 DATASETS_DIR = "datasets"
-MODELS_DIR = "models"
+TRAINED_MODELS_DIR = "trained_models"
 CACHE_DIR = ".cache"
 
 OLD_DATASET = "all_cancer_types_2007"
@@ -17,6 +17,7 @@ NEW_DATA_FILE = os.path.join(RAW_DIR, "dati.csv")
 
 IDF = "idf.json"
 TOKEN_CODEC = "token_codec.json"
+STATS = "statistics"
 
 TRAINING_SET = "training_set.csv"
 VALIDATION_SET = "validation_set.csv"
