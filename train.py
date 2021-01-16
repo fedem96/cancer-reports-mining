@@ -29,8 +29,8 @@ parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut lo
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
 parser.add_argument("-r", "--reduce",
-                    help="list of (space-separated) grouping strategies to use in multi-report predictions. ",
-                    default=None, nargs='+', type=str, choices=['max', 'mean', 'sum'], metavar=('STRATEGY1', 'STRATEGY2'))
+                    help="grouping strategy to use in multi-report predictions.",
+                    default=None, type=str, metavar='STRATEGY', required=True)
 parser.add_argument("-t", "--train-config", help="json with train configuration", default=os.path.join("train_configs", "train_example.json"), type=str)
 args = parser.parse_args()
 
@@ -40,13 +40,21 @@ p = Preprocessor.get_default()
 t = Tokenizer()
 tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
 
-with Chronostep("encoding reports"):
+with Chronostep("reading input"):
     with open(args.train_config, "rt") as file:
         train_config = json.load(file)
 
     classifications, regressions = train_config.get("classifications", []), train_config.get("regressions", [])
     transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
 
+    with open(args.reduce, "rt") as file:
+        reduce_config = json.load(file)
+    assert "reduce_type" in reduce_config and "reduce_mode" in reduce_config
+    reduce_type = reduce_config["reduce_type"]
+    reduce_mode = reduce_config["reduce_mode"]
+    assert reduce_type in {"data", "features", "predictions"}
+
+with Chronostep("encoding reports"):
     input_cols = ["diagnosi", "macroscopia", "notizie"]
 
     sets = {"train": Dataset(os.path.join(args.dataset_dir, TRAINING_SET)), "val": Dataset(os.path.join(args.dataset_dir, VALIDATION_SET))}
@@ -70,9 +78,10 @@ with Chronostep("encoding reports"):
             dataset.cut_sequences(args.max_length)
 
         if args.group_by is not None:
-            # if args.reduce is None:
-            #     raise ValueError("since group_by is set, at least a grouping strategy is required")
             dataset.group_by(args.group_by)
+
+            if reduce_type == "data":
+                dataset.reduce(reduce_mode)
 
     training, validation = sets["train"], sets["val"]
     if args.group_by is not None:
@@ -85,7 +94,7 @@ for column in training.labels.columns:
 
 
 with Chronostep("creating model"):
-    model_name = args.name or str(datetime.now())
+    model_name = args.name or str(datetime.now()).replace(":", ";")
     model_dir = os.path.join(TRAINED_MODELS_DIR, model_name)
     os.makedirs(model_dir)
 
@@ -101,9 +110,10 @@ with Chronostep("creating model"):
         with open(args.model_args, "rt") as file:
             model_args.update(json.load(file))
     model = Model(**model_args)
+    model.set_reduce_method(reduce_type, reduce_mode)
 
     for cls_var in classifications:
-        model.add_classification(cls_var, training.dataframe[cls_var].nunique())
+        model.add_classification(cls_var, training.nunique(cls_var))
 
     # for reg_var in regressions:
     #     model.add_regression(reg_var)

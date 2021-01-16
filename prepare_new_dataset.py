@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 from collections import defaultdict
 
@@ -26,7 +27,6 @@ df = df.rename(columns={"Year_of_diagnosis": "anno_diagnosi"})
 print("cleaning data")
 
 ''' remove invalid rows '''
-df.drop(df[df["anno_referto"] != df["anno_diagnosi"]].index, inplace=True)
 df.drop(df[df["id_isto"] == 5068716].index, inplace=True)
 
 ''' remove invalid columns '''
@@ -36,7 +36,6 @@ df.drop(df.filter(regex="Unname"), axis=1, inplace=True)
 df["sede_icdo3"] = df["sede_icdo3"].apply(lambda s: s.upper())
 
 ''' clean "dimensioni" column '''
-# df.drop(df[df["dimensioni"] == " bb"].index, inplace=True)
 df.loc[df.index[df["dimensioni"] == " bb"], "dimensioni"] = np.NaN
 
 for column in ["dimensioni"]:
@@ -81,7 +80,6 @@ df.loc[mask_invalid_rows, "numero_sentinella_positivi"] = np.NaN
 ''' clean "grading" column '''
 df.loc[df.index[df["grading"] == "A"], "grading"] = np.NaN
 df.loc[df.index[df["grading"] == "B"], "grading"] = np.NaN
-# df["grading"] = df["grading"].astype("Int64")
 
 ''' clean "mib1", "cerb" and "ki67" columns '''
 pos_regex = re.compile("p.*o.*s", re.I)
@@ -111,52 +109,32 @@ df.drop(df[(df["diagnosi"] == "") & (df["macroscopia"] == "") & (df["notizie"] =
 
 print("solving ambiguities")
 df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False) # TODO
-# label_columns = ['sede_icdo3', 'morfologia_icdo3',
-#                  'dimensioni', 'tipo_T', 'metastasi', 'modalita_T', 'modalita_N',
-#                  'stadio_T', 'stadio_N', 'recettori_estrogeni_%',
-#                  'recettori_progestin_%', 'numero_sentinella_asportati',
-#                  'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67', 'grading']
-# labels_count_df = sqldf("select id_paz, anno_referto, " + ", ".join(["count (distinct \"" + col + "\") as '" + col + "'" for col in label_columns]) + " from df group by id_paz, anno_referto")
-# count_new_nans = defaultdict(lambda: 0)
-# for row in labels_count_df.iterrows():
-#     patient_id, year = row[1]['id_paz'], row[1]['anno_referto']
-#     pat_mask = (df['id_paz'] == patient_id) & (df['anno_referto'] == year)
-#     df_pat = df[pat_mask]
-#     for column in label_columns:
-#         n = row[1][column]
-#         # if n > 1:
-#         #     count_new_nans[column] += n
-#         #     df.loc[df.index[pat_mask], column] = np.NaN
-#         if n == 1 and df_pat[column].hasnans:
-#             df.loc[df.index[pat_mask], column] = df_pat[column].dropna().unique()[0]
-
-# print("number of nans inserted: " + str(dict(count_new_nans)))
-# max_cols = [""]
-# for i in range(len(duplicated_histologies)):
-#     id_histo = duplicated_histologies.loc[i].item()
-#     mask = df["id_isto"] == id_histo
-#     for year in sorted(list(df[mask]["anno_diagnosi"].unique()), reverse=True):
-#         pass
-
-assert sqldf("select count(*) from df group by id_isto having count(*) > 1").sum().item() == 0
 
 print("asserting data validity")
+assert sqldf("select count(*) from df group by id_isto having count(*) > 1").sum().item() == 0
 for column in ["recettori_estrogeni_%", "recettori_progestin_%", "mib1", "cerb", "ki67"]:
+    # a percentage can't be smaller than 0 or greater than 100
     assert df[column].min() >= 0 and df[column].max() <= 100
+for col in set(df.columns) - {"id_paz", "anno_diagnosi", "anno_referto", "id_isto", "notizie", "macroscopia", "diagnosi"}:
+    # assure that each patient has no columns with multiple values
+    assert sqldf("select ((count(distinct \"{}\") > 0) + (count(*) - count(\"{}\") > 0)) s from df group by id_paz having s>1".format(col, col)).sum().item() == 0
 
-# print("floats to strings")
-# for column in df.columns:
-#     if df[column].dtype == float:
-#         df[column] = df[column].apply(lambda v: str(v).rstrip('0').rstrip('.') if v is not None and v != np.NaN else "")
+print("splitting dataset into train, validation and test")
+testPatients = set(df[df['anno_diagnosi'] == 2015]['id_paz'].unique())
+valPatients = set(df[df['anno_diagnosi'] == 2014]['id_paz'].unique()) - testPatients
+trainPatients = set(df['id_paz'].unique()) - testPatients - valPatients
+assert len(valPatients.intersection(testPatients)) == 0
+assert len(valPatients.intersection(trainPatients)) == 0
+assert len(trainPatients.intersection(testPatients)) == 0
 
-print("splitting dataset by year of diagnosis")
-dfTrain, dfTest = train_test_split(df, "anno_diagnosi", 2015)
-dfTrain, dfVal = train_test_split(dfTrain, "anno_diagnosi", 2014)
-# TODO: update stats
-# total:     121415 samples
-# train:      82372 samples (67.8%) from 2003 to 2013
-# validation: 19528 samples (16.1%) of 2014
-# test:       19515 samples (16.1%) of 2015
+dfTrain = df[df['id_paz'].isin(trainPatients)].copy()
+dfVal = df[df['id_paz'].isin(valPatients)].copy()
+dfTest = df[df['id_paz'].isin(testPatients)].copy()
+
+# total:      25184 patients                                                                      115865 reports
+# train:      17565 patients (69.75%) without reports neither in 2014 nor in 2015                  77862 reports
+# validation:  3783 patients (15.02%) with at least one report in 2014 (but not in 2015)           18994 reports
+# test:        3836 patients (15.23%) with at least one report in 2015                             19009 reports
 
 print("saving cleaned csv")
 if not os.path.exists(args.dataset_dir): os.makedirs(args.dataset_dir)
@@ -179,10 +157,8 @@ for dataframe, images_dir in zip(dataframes, images_dirs):
     plt.savefig(os.path.join(images_dir, "notnull-bar.png"))
     plt.clf()
     for col in bar_columns:
-        print(col)
         plot_bar(dataframe, col, output_file=os.path.join(images_dir, col + "-bar.png"))
     for col in hist_columns:
-        print(col)
         plot_hist(dataframe, col, output_file=os.path.join(images_dir, col + "-hist.png"))
 
     with open(os.path.join(images_dir, "stats.json"), 'w') as outfile:
@@ -190,8 +166,8 @@ for dataframe, images_dir in zip(dataframes, images_dirs):
 
 print("generating codec")
 # training_set = pd.read_csv(os.path.join(args.dataset_dir, TRAINING_SET), usecols=cols)
-replace_nulls(df, {col: "" for col in input_cols})
-texts = merge_and_extract(df, input_cols)
+replace_nulls(dfTrain, {col: "" for col in input_cols})
+texts = merge_and_extract(dfTrain, input_cols)
 TokenCodecCreator().create_codec(texts).save(os.path.join(args.dataset_dir, args.codec))
 
 print("generating idf")

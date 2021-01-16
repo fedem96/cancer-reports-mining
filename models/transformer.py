@@ -10,10 +10,10 @@ from models.modular_base import ModularBase
 
 class Transformer:
 
-    def __init__(self, vocab_size=None, embedding_dim=128, deep_features=128, dropout=0, num_heads=1, n_layers=1, reduce=None, directory=None):
+    def __init__(self, vocab_size=None, embedding_dim=128, deep_features=128, dropout=0, num_heads=1, n_layers=1, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, reduce, directory).to(device)
+        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
         self.model.extract_features = self.extract_features
 
         self.src_mask = None

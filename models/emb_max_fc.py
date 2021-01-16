@@ -6,10 +6,10 @@ from models.modular_base import ModularBase
 
 
 class EmbMaxLin:
-    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, reduce=None, directory=None):
+    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, reduce, directory).to(device)
+        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
         self.model.extract_features = self.extract_features
 
         if tuple != type(num_filters) != list:
