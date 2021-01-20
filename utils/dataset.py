@@ -124,22 +124,45 @@ class Dataset:
         # number of patients in both sets: len( set(list(zip(*list(self.key_to_index.keys())))[0]).intersection(set(list(zip(*list(other_dataset.key_to_index.keys())))[0])) )
 
     def filter(self, filter):
-        filter_dict = {"same_year": lambda record, group_df: ""}
+        if callable(filter):
+            filter_fn = filter
+        elif type(filter) == str:
+            def _same_year(record, group_df):
+                mask = group_df['anno_referto'].values == group_df['anno_diagnosi'].values
+                if not any(mask):
+                    mask = ~mask
+                record = [r for (r, b) in zip(record, mask) if b]
+                group_df = group_df[mask] # TODO: this line is slow
+                return record, group_df
+            filter_dict = {"same_year": _same_year}
+            filter_fn = filter_dict[filter]
+        else:
+            raise ValueError("Invalid filter method")
+        data = []
+        dataframe = []
+        for (key, group), record in zip(self.dataframe, self.data):
+            r, g = filter_fn(record, group)
+            dataframe.append((key, g))
+            data.append(record)
+        assert len(self.data) == len(data)
+        assert len(dataframe) == len(data)
+        self.data = data
+        self.dataframe = dataframe
 
     def reduce(self, reduce):
         if callable(reduce):
             reduce_fn = reduce
         elif type(reduce) == str:
             def _most_recent(record, group_df):
-                mr_year = group_df['anno_referto'].max()
-                mask = group_df['anno_referto'] == mr_year
+                mr_year = max(group_df['anno_referto'].values)
+                mask = group_df['anno_referto'].values == mr_year
                 if not any(mask):
                     mask = ~mask
-                group_df = group_df[mask]
+                group_df = group_df[mask] # TODO: this line is slow
                 record = [r for (r, b) in zip(record, mask) if b]
                 if len(record) > 1:
-                    mr_isto = group_df['id_isto'].max()
-                    mask = group_df['id_isto'] == mr_isto
+                    mr_isto = max(group_df['id_isto'].values)
+                    mask = group_df['id_isto'].values == mr_isto
                     record = [r for (r, b) in zip(record, mask) if b]
                     # group_df = group_df[mask]
                 assert len(record) == 1

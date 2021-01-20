@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam, SGD
 
-from utils.chrono import Chronometer
+from utils.chrono import Chronometer, Chronoloop
 from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
 
 
@@ -68,24 +68,23 @@ class ModularBase(nn.Module):
         pass
 
     def _forward_simple(self, x):
-        with Chronometer("ef"): features = self.extract_features(x)
-        with Chronometer("c"): classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
-        with Chronometer("r"): regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
+        features = self.extract_features(x)
+        classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
+        regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
         return {"features": features, **classes, **regressions}
 
     def _forward_reducing_features(self, x):
-        with Chronometer("ef"):
-            features_list = []
-            for group in x:
-                group_all_features = self.extract_features(group)
-                group_features = torch.cat([reducer(group_all_features, dim=0) for reducer in self.features_reducers])
-                features_list.append(group_features)
-            features = torch.stack(features_list)
-        with Chronometer("c"): classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
-        with Chronometer("r"): regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
+        features_list = []
+        for group in x:
+            group_all_features = self.extract_features(group)
+            group_features = torch.cat([reducer(group_all_features, dim=0) for reducer in self.features_reducers])
+            features_list.append(group_features)
+        features = torch.stack(features_list)
+        classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
+        regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
         return {"features": features, **classes, **regressions}
 
-    def _forward_reducing_predictions(self, x): # TODO: implement
+    def _forward_reducing_predictions(self, x):
         classes = {var: torch.zeros((0, self.classifiers[var].out_features), device=self.current_device()) for var, classifier in self.classifiers.items()}
         regressions = {var: torch.zeros((0, self.regressor[var].out_features), device=self.current_device()) for var, regressor in self.regressors.items()}
         reduce_fn = self.predictions_reducers[0]
@@ -169,6 +168,9 @@ class ModularBase(nn.Module):
     def train_step(self, data, labels, training=True):
         if training:
             self.optimizer.zero_grad()
+            self.train()
+        else:
+            self.eval()
         torch.set_grad_enabled(training)
 
         forwarded = self(data)

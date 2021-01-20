@@ -43,7 +43,7 @@ def train_test_split(df, year_column, test_from_year):
     return dfTrain, dfTest
 
 
-def bar(values, title=None, x_label=None, y_label=None, output_file=None):
+def bar(values, title=None, xlabel=None, ylabel=None, output_file=None):
     import matplotlib.pyplot as plt
     from collections import Counter
 
@@ -56,8 +56,8 @@ def bar(values, title=None, x_label=None, y_label=None, output_file=None):
     axes.bar(xs, heights)
 
     if title is not None: plt.title(title)
-    if x_label is not None: plt.title(x_label)
-    if y_label is not None: plt.title(y_label)
+    if xlabel is not None: plt.xlabel(xlabel)
+    if ylabel is not None: plt.ylabel(ylabel)
 
     if output_file is None:
         plt.show()

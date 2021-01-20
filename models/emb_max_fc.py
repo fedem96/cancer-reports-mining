@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from models.modular_base import ModularBase
+from utils.chrono import Chronometer
 
 
 class EmbMaxLin:

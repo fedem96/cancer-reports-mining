@@ -10,7 +10,7 @@ class Chronometer:
         self.start = timer()
 
     def __exit__(self, *args):
-        #print("elapsed time ({}): {}".format(self.identifier, (timer() - self.start)))
+        print("elapsed time ({}): {}".format(self.identifier, (timer() - self.start)))
         pass
 
 

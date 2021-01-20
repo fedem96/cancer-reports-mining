@@ -4,7 +4,7 @@ import os
 from importlib import import_module
 from timeit import default_timer as timer
 
-from utils.chrono import Chronostep
+from utils.chrono import Chronostep, Chronometer
 from utils.constants import *
 from utils.dataset import Dataset
 from utils.preprocessing import *
@@ -17,20 +17,22 @@ parser.add_argument("-b", "--batch-size", help="batch size to use for training",
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=100, type=int)
+parser.add_argument("-f", "--filter",
+                    help="report filtering strategy",
+                    default=None, type=str, choices=['same_year'], metavar='STRATEGY')
 parser.add_argument("-gb", "--group_by",
-                    help="list of (space-separated) grouping attributes to make multi-report predictions. "
-                         "If set, parameter 'reduce' must also be set",
+                    help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str)
-parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=str)
+parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
 parser.add_argument("-r", "--reduce",
                     help="grouping strategy to use in multi-report predictions.",
-                    default=None, type=str, metavar='STRATEGY', required=True)
+                    default=None, type=json.loads, metavar='STRATEGY', required=True)
 parser.add_argument("-t", "--train-config", help="json with train configuration", default=os.path.join("train_configs", "train_example.json"), type=str)
 args = parser.parse_args()
 
@@ -47,11 +49,9 @@ with Chronostep("reading input"):
     classifications, regressions = train_config.get("classifications", []), train_config.get("regressions", [])
     transformations, mappings = train_config.get("transformations", {}), train_config.get("mappings", {})
 
-    with open(args.reduce, "rt") as file:
-        reduce_config = json.load(file)
-    assert "reduce_type" in reduce_config and "reduce_mode" in reduce_config
-    reduce_type = reduce_config["reduce_type"]
-    reduce_mode = reduce_config["reduce_mode"]
+    assert "type" in args.reduce and "mode" in args.reduce
+    reduce_type = args.reduce["type"]
+    reduce_mode = args.reduce["mode"]
     assert reduce_type in {"data", "features", "predictions"}
 
 with Chronostep("encoding reports"):
@@ -80,6 +80,8 @@ with Chronostep("encoding reports"):
         if args.group_by is not None:
             dataset.group_by(args.group_by)
 
+            if args.filter is not None:
+                dataset.filter(args.filter)
             if reduce_type == "data":
                 dataset.reduce(reduce_mode)
 
@@ -107,8 +109,7 @@ with Chronostep("creating model"):
     Model = getattr(import_module(module), class_name)
     model_args = {"vocab_size": tc.num_tokens()+1, "directory": model_dir}
     if args.model_args is not None:
-        with open(args.model_args, "rt") as file:
-            model_args.update(json.load(file))
+        model_args.update(args.model_args)
     model = Model(**model_args)
     model.set_reduce_method(reduce_type, reduce_mode)
 
