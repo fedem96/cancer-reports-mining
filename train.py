@@ -1,10 +1,8 @@
 import argparse
 import json
-import os
 from importlib import import_module
-from timeit import default_timer as timer
 
-from utils.chrono import Chronostep, Chronometer
+from utils.chrono import Chronostep
 from utils.constants import *
 from utils.dataset import Dataset
 from utils.preprocessing import *
@@ -12,7 +10,7 @@ from utils.tokenizing import TokenCodec, Tokenizer
 from utils.utilities import *
 
 parser = argparse.ArgumentParser(description='Train a model')
-parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0.00001, type=float)
+parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0, type=float)
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=115, type=int)
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
@@ -52,7 +50,7 @@ with Chronostep("reading input"):
     assert "type" in args.reduce and "mode" in args.reduce
     reduce_type = args.reduce["type"]
     reduce_mode = args.reduce["mode"]
-    assert reduce_type in {"data", "features", "predictions"}
+    assert reduce_type in {"data", "features", "logits", "eval"}
 
 with Chronostep("encoding reports"):
     input_cols = ["diagnosi", "macroscopia", "notizie"]
@@ -77,7 +75,7 @@ with Chronostep("encoding reports"):
         if args.max_length is not None:
             dataset.cut_sequences(args.max_length)
 
-        if args.group_by is not None:
+        if args.group_by is not None and (reduce_type != "eval" or set_name != "train"):
             dataset.group_by(args.group_by)
 
             if args.filter is not None:
@@ -86,7 +84,7 @@ with Chronostep("encoding reports"):
                 dataset.reduce(reduce_mode)
 
     training, validation = sets["train"], sets["val"]
-    if args.group_by is not None:
+    if args.group_by is not None and reduce_type != "eval":
         training.assert_disjuncted(validation)
 
 print("train labels distribution:")
@@ -120,8 +118,8 @@ with Chronostep("creating model"):
     #     model.add_regression(reg_var)
 
 print("parameters:", sum([p.numel() for p in model.parameters()]))
-for parameters in model.parameters():
-    print("\t{}: {}".format(parameters.name, parameters.numel()))
+for parameter_name, parameter in model.named_parameters():
+    print("\t{}: {}".format(parameter_name, parameter.numel()))
 
 hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty}
 hyperparameters.update({"max_epochs": args.epochs, "batch_size": args.batch_size})

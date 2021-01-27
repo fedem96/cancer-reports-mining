@@ -1,25 +1,33 @@
-from abc import abstractmethod
 import os
-from timeit import default_timer as timer
+from abc import abstractmethod
+from collections import OrderedDict
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam, SGD
+from torch.optim import Adam
 
-from utils.chrono import Chronometer, Chronoloop
 from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
 
 
 class ModularBase(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, deep_features, directory=None):
+    def __init__(self, modules_dict, deep_features, directory=None):
         super(ModularBase, self).__init__()
-        self.emb = nn.Embedding(vocab_size, embedding_dim)
+        self.net = nn.ModuleDict(OrderedDict({
+            **modules_dict,
+            "classifiers": nn.ModuleDict({}),
+            "regressors": nn.ModuleDict({})
+        }))
 
         self.deep_features = deep_features
 
-        self.classifiers = nn.ModuleDict({})
-        self.regressors = nn.ModuleDict({})
+        self.classifiers = self.net['classifiers']
+        self.regressors = self.net['regressors']
+
+        for module_name in modules_dict:
+            if hasattr(self, module_name):
+                raise NameError("Name {} unavailable".format(module_name))
+            setattr(self, module_name, modules_dict[module_name])
 
         # self.ce = nn.CrossEntropyLoss()
         # self.l2 = nn.MSELoss()
@@ -30,7 +38,7 @@ class ModularBase(nn.Module):
 
         self.reduce_type = "data"
         self.features_reducers = None
-        self.predictions_reducers = None
+        self.logits_reducer = None
         self.forward = self._forward_simple
 
         if directory is not None and not os.path.exists(directory):
@@ -51,12 +59,22 @@ class ModularBase(nn.Module):
                            "std": torch.std, "sum": torch.sum}
             self.features_reducers = [reduce_dict[rm] for rm in reduce_mode]
             self.forward = self._forward_reducing_features
-        elif reduce_type == "predictions":
+        elif reduce_type == "logits":
             reduce_dict = {
-                # "argmax": lambda *args, **kwargs: torch.argmax(*args, **kwargs).values,
-                "logits_mean": lambda *args, **kwargs: torch.mean(*args, **kwargs)}
-            self.predictions_reducers = [reduce_dict[rm] for rm in reduce_mode]
-            self.forward = self._forward_reducing_predictions
+                "mean": lambda *args, **kwargs: torch.mean(*args, **kwargs)}
+            assert len(reduce_mode) == 1
+            self.logits_reducer = reduce_dict[reduce_mode[0]]
+            self.forward = self._forward_reducing_logits
+        elif reduce_type == "eval":
+            def _most_frequent(*args, **kwargs):
+                num_classes = args[0].shape[1]
+                return torch.nn.functional.one_hot(args[0].argmax(dim=1).mode(keepdim=True).values, num_classes)
+            reduce_dict = {
+                "most_frequent": _most_frequent
+            }
+            assert len(reduce_mode) == 1
+            self.logits_reducer = reduce_dict[reduce_mode[0]]
+            self.forward = self._forward_simple
         else:
             raise ValueError("Invalid reduce type: " + reduce_type)
         self.reduce_type = reduce_type
@@ -84,10 +102,10 @@ class ModularBase(nn.Module):
         regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
         return {"features": features, **classes, **regressions}
 
-    def _forward_reducing_predictions(self, x):
+    def _forward_reducing_logits(self, x):
         classes = {var: torch.zeros((0, self.classifiers[var].out_features), device=self.current_device()) for var, classifier in self.classifiers.items()}
         regressions = {var: torch.zeros((0, self.regressor[var].out_features), device=self.current_device()) for var, regressor in self.regressors.items()}
-        reduce_fn = self.predictions_reducers[0]
+        reduce_fn = self.logits_reducer
         for group in x:
             group_all_features = self.extract_features(group)
             group_classes = {var: reduce_fn(classifier(group_all_features), dim=0, keepdim=True) for var, classifier in self.classifiers.items()}
@@ -132,7 +150,10 @@ class ModularBase(nn.Module):
             if val_data is not None:
                 val_data = [torch.tensor(report, device=self.current_device()) for report in val_data]
         else:
-            train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
+            if self.reduce_type == "eval":
+                train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
+            else:
+                train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
             if val_data is not None:
                 val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
 
@@ -166,14 +187,20 @@ class ModularBase(nn.Module):
         return logger.close()
 
     def train_step(self, data, labels, training=True):
+
         if training:
             self.optimizer.zero_grad()
             self.train()
+            torch.set_grad_enabled(True)
+            forwarded = self(data)
         else:
             self.eval()
-        torch.set_grad_enabled(training)
+            torch.set_grad_enabled(False)
+            if self.reduce_type == "eval":
+                forwarded = self._forward_reducing_logits(data)
+            else:
+                forwarded = self(data)
 
-        forwarded = self(data)
         losses = {}
         accuracies = {}
         maes = {}
@@ -211,7 +238,8 @@ class ModularBase(nn.Module):
             total_loss += loss
             maes[var] = (preds.detach() - grth).abs().mean().item()
 
-        # total_loss += self.activation_penalty * forwarded["features"].abs().sum()
+        if "features" in forwarded and self.activation_penalty != 0:
+            total_loss += self.activation_penalty * forwarded["features"].abs().sum()
         if training:
             total_loss.backward()
             self.optimizer.step()
@@ -224,6 +252,7 @@ class ModularBase(nn.Module):
     def add_regression(self, task_name):
         self.regressors[task_name] = nn.Linear(self.deep_features, 1).to(self.current_device())
 
+    @DeprecationWarning
     def infer(self, x):
         with torch.no_grad():
             if type(x) == list or type(x) == tuple:

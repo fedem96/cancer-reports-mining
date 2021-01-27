@@ -3,26 +3,29 @@ import torch.nn.functional as F
 from torch import nn
 
 from models.modular_base import ModularBase
-from utils.chrono import Chronometer
 
 
 class EmbMaxLin:
     def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
-        self.model.extract_features = self.extract_features
 
         if tuple != type(num_filters) != list:
             num_filters = [num_filters]
         layers = []
         input_size = [embedding_dim] + num_filters
         for n in range(len(num_filters)):
-            layers.append(nn.Conv1d(input_size[n], num_filters[n], 3, padding=1).to(self.model.current_device()))
+            layers.append(nn.Conv1d(input_size[n], num_filters[n], 3, padding=1).to(device))
             layers.append(nn.ReLU())
-        # self.convs = [nn.Conv1d(embedding_dim, n, 3, padding=1).to(self.model.current_device()) for n in num_filters]
-        self.model.convs = nn.Sequential(*layers)
-        self.model.fc = nn.Linear(num_filters[-1], deep_features).to(self.model.current_device())
+
+        modules = {
+            "word_embedding": nn.Embedding(vocab_size, embedding_dim),
+            "convs": nn.Sequential(*layers),
+            "fc": nn.Linear(num_filters[-1], deep_features).to(device)
+        }
+
+        self.model = ModularBase(modules, deep_features, directory).to(device)
+        self.model.extract_features = self.extract_features
 
     def __getattr__(self, *args):
         return self.model.__getattribute__(*args)
@@ -37,7 +40,7 @@ class EmbMaxLin:
         reports_lengths = [len(t) for t in x]
         x_tensor = torch.cat(x)
 
-        deep_words = self.model.emb(x_tensor)
+        deep_words = self.model.word_embedding(x_tensor)
         reports_list = deep_words.split(reports_lengths)
         # deep_reports = []
         #

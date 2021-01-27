@@ -1,9 +1,10 @@
 colorama
-matplotlib
+matplotlib==3.3.2
 numpy
 pandas
 pandasql
 spacy
 tableformatter
 tensorboard
+transformers
 torch

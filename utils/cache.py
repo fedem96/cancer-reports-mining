@@ -14,9 +14,18 @@ def caching(function):
     def wrapped_function(*args):
 
         def _obj_to_hex(o):
-            return "&".join([o.__module__, o.__qualname__, str(signature(o)), str(o.__defaults__), str(o.__kwdefaults__)]) if callable(o) else str(o)
+            if callable(o):
+                return "&".join([o.__module__, o.__qualname__, str(signature(o)), str(o.__defaults__), str(o.__kwdefaults__)])
+            elif hasattr(o, "__iter__"):
+                l = [str(type(o)), str(len(o)), str(dir(o))]
+                if hasattr(o, "__len__") and len(o) > 0:
+                    l.extend([str(list(o)[0]), str(list(o)[-1])])
+                return "&".join(l)
+            else:
+                return str(o)
 
         hex_digest = hashlib.sha256(bytes(str([_obj_to_hex(arg) for arg in args]), "utf-8")).hexdigest()
+
         file_cache = os.path.join(CACHE_DIR, hex_digest)
         if not os.path.exists(file_cache):
             print("calculating result")

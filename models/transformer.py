@@ -10,23 +10,21 @@ from models.modular_base import ModularBase
 
 class Transformer:
 
-    def __init__(self, vocab_size=None, embedding_dim=128, deep_features=128, dropout=0, num_heads=1, n_layers=1, directory=None):
+    def __init__(self, vocab_size=None, embedding_dim=256, deep_features=256, dropout=0, num_heads=1, n_layers=1, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
-        self.model = ModularBase(vocab_size, embedding_dim, deep_features, directory).to(device)
+
+        self.pos_encoder = PositionalEncoding(embedding_dim, dropout).to(device)
+        encoder_layers = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout).to(device)
+        # self.model.transformer_encoder = nn.TransformerEncoder(encoder_layers, n_layers).to(self.model.current_device())
+        # self.model.transformer_encoder = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout).to(self.model.current_device())
+        modules = {
+            "word_embedding": nn.Embedding(vocab_size, embedding_dim),
+            "transformer_encoder": nn.TransformerEncoder(encoder_layers, n_layers).to(device)
+        }
+
+        self.model = ModularBase(modules, deep_features, directory).to(device)
         self.model.extract_features = self.extract_features
-
-        self.src_mask = None
-        self.model.pos_encoder = PositionalEncoding(embedding_dim, dropout).to(self.model.current_device())
-        #encoder_layers = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout)
-        #self.transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
-        self.model.transformer_encoder = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout).to(self.model.current_device())
-        #self.model.transformer_decoder = nn.TransformerDecoderLayer(embedding_dim, num_heads, deep_features, dropout).to(self.model.current_device())
-
-
-        # self.encoder = nn.Embedding(ntoken, ninp)
-        # self.ninp = ninp
-        #
         # self.init_weights()
 
 
@@ -61,12 +59,13 @@ class Transformer:
 
         sizes = [len(t) for t in x]
         # target = torch.zeros(batch_size, 1, self.model.deep_features).to(self.model.current_device())
-        emb_dim_sqrt = math.sqrt(self.model.emb.embedding_dim)
-        batch_embs = pad_sequence((self.model.emb(torch.cat(x).long()) * emb_dim_sqrt).split(sizes), batch_first=True)
-        batch_embs = self.model.pos_encoder(batch_embs)
-        batch_embs = self.model.transformer_encoder(batch_embs)
-        # return self.model.transformer_decoder(target, batch_embs).squeeze()
-        return batch_embs.sum(axis=1) / len(batch_embs)
+        emb_dim_sqrt = math.sqrt(self.model.word_embedding.embedding_dim)
+        batch_embs = pad_sequence((self.model.word_embedding(torch.cat(x).long()) * emb_dim_sqrt).split(sizes), batch_first=True)
+        mask = batch_embs.sum(dim=2) == 0
+
+        #batch_embs = self.pos_encoder(batch_embs)  # TODO: check and add position encoding
+        batch_embs = self.model.transformer_encoder(batch_embs.permute(1, 0, 2), src_key_padding_mask=mask)
+        return batch_embs.max(axis=0).values
 
     # def extract_features(self, x):
     #     # batch_size = len(x)
