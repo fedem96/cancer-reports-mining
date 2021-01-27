@@ -6,9 +6,12 @@ from models.modular_base import ModularBase
 
 
 class EmbMaxLin:
-    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, directory=None):
+    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, net_seed=None, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
+
+        if net_seed is not None:
+            torch.manual_seed(net_seed)
 
         if tuple != type(num_filters) != list:
             num_filters = [num_filters]

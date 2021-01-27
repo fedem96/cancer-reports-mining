@@ -142,7 +142,7 @@ class ModularBase(nn.Module):
 
         batch_size = hyperparams["batch_size"]
         self.activation_penalty = hyperparams["activation_penalty"]
-        if "data_seed" in hyperparams:
+        if "data_seed" in hyperparams and hyperparams["data_seed"] is not None:
             np.random.seed(hyperparams["data_seed"])
 
         if self.reduce_type is None or self.reduce_type == "data":

@@ -10,9 +10,12 @@ from models.modular_base import ModularBase
 
 class Transformer:
 
-    def __init__(self, vocab_size=None, embedding_dim=256, deep_features=256, dropout=0, num_heads=1, n_layers=1, directory=None):
+    def __init__(self, vocab_size, embedding_dim, deep_features, dropout, num_heads, n_layers, net_seed=None, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
+
+        if net_seed is not None:
+            torch.manual_seed(net_seed)
 
         self.pos_encoder = PositionalEncoding(embedding_dim, dropout).to(device)
         encoder_layers = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout).to(device)

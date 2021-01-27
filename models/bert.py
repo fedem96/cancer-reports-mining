@@ -8,9 +8,13 @@ from models.modular_base import ModularBase
 
 class Bert:
 
-    def __init__(self, vocab_size, embedding_dim, dropout, num_heads, n_layers, directory=None):
+    def __init__(self, vocab_size, embedding_dim, dropout, num_heads, n_layers, net_seed=None, directory=None):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
+
+        if net_seed is not None:
+            torch.manual_seed(net_seed)
+
         modules = {
             "bert": BertModel(BertConfig(vocab_size=vocab_size, hidden_size=embedding_dim,
                                          num_attention_heads=num_heads, num_hidden_layers=n_layers,

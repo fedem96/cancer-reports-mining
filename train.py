@@ -14,6 +14,7 @@ parser.add_argument("-ap", "--activation-penalty", help="weight for activation (
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=115, type=int)
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
+parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=100, type=int)
 parser.add_argument("-f", "--filter",
                     help="report filtering strategy",
@@ -25,6 +26,7 @@ parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename",
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
+parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
@@ -108,6 +110,8 @@ with Chronostep("creating model"):
     model_args = {"vocab_size": tc.num_tokens()+1, "directory": model_dir}
     if args.model_args is not None:
         model_args.update(args.model_args)
+    if args.net_seed is not None:
+        model_args.update({"net_seed": args.net_seed})
     model = Model(**model_args)
     model.set_reduce_method(reduce_type, reduce_mode)
 
@@ -121,8 +125,8 @@ print("parameters:", sum([p.numel() for p in model.parameters()]))
 for parameter_name, parameter in model.named_parameters():
     print("\t{}: {}".format(parameter_name, parameter.numel()))
 
-hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty}
-hyperparameters.update({"max_epochs": args.epochs, "batch_size": args.batch_size})
+hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty,
+                   "max_epochs": args.epochs, "batch_size": args.batch_size, "data_seed": args.data_seed}
 with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)
 
