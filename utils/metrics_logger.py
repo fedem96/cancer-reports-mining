@@ -1,6 +1,8 @@
 import inspect
 from collections import defaultdict
 import os
+
+import aim
 import numpy as np
 from timeit import default_timer as timer
 
@@ -14,14 +16,15 @@ def dict_str(dictionary, digits=3):
 
 class MetricsLogger:
 
-    def __init__(self, terminal=None, tensorboard_dir=None, history_size=1):
-        if terminal is None and tensorboard_dir is None:
+    def __init__(self, terminal=None, tensorboard_dir=None, aim_name=None, history_size=1):
+        if terminal is None and tensorboard_dir is None and aim_name is not None:
             raise ValueError("the logger has to log something")
         self.metrics_train = {}
         self.metrics_val = {}
         self.tables = {}
         self.terminal = terminal
         self.tensorboard_dir = tensorboard_dir
+        self.log_aim = aim_name is not None
         self.history_size = history_size
         self.history = defaultdict(lambda: defaultdict(lambda: []))
         self.best_train = defaultdict(lambda: defaultdict(lambda: None))
@@ -31,6 +34,8 @@ class MetricsLogger:
             from torch.utils.tensorboard import SummaryWriter
             self.sw_train = SummaryWriter(os.path.join(tensorboard_dir, "train"))
             self.sw_val = SummaryWriter(os.path.join(tensorboard_dir, "val"))
+        if self.log_aim:
+            aim.Session()
 
     def prepare(self, epoch, metrics_groups):
         self.start = timer()
@@ -72,6 +77,9 @@ class MetricsLogger:
 
         if self.tensorboard_dir is not None:
             self._log_tensorboard()
+
+        if self.log_aim is not None:
+            self._log_aim()
 
     def _log_console_simple(self):
         out = "epoch {}, elapsed time {}".format(self.epoch, (self.end-self.start)) + "\ntrain:"
@@ -133,11 +141,31 @@ class MetricsLogger:
                     value = value()
                 self.sw_val.add_scalar(f'{group}/{name}', value, self.epoch)
 
-    def close(self):
-        if self.tensorboard_dir is not None:
-            self.sw_train.close()
-            self.sw_val.close()
-        return self
+    def _log_aim(self):
+        for group in self.metrics_train:
+            for metric in self.metrics_train[group]:
+                value = self.metrics_train[group][metric]
+                if callable(value):
+                    value = value()
+                aim.track(value, name=group.replace("-", ""), epoch=self.epoch, var=metric, dataset='train')
+        for group in self.metrics_val:
+            for metric in self.metrics_val[group]:
+                value = self.metrics_val[group][metric]
+                if callable(value):
+                    value = value()
+                aim.track(value, name=group.replace("-", ""), epoch=self.epoch, var=metric, dataset='val')
+
+    def log_hyper_parameters_and_best_metrics(self, hparams):
+        metrics_train = {"{}_{}".format(group, metric): self.best_train[group][metric] for group in self.best_train for metric in self.best_train[group]}
+        metrics_val = {"{}_{}".format(group, metric): self.best_val[group][metric] for group in self.best_val for metric in self.best_val[group]}
+        metrics_train.update({"{}_AVG".format(group): sum(self.best_train[group].values()) / len(self.best_train[group]) for group in self.metrics_train if len(self.best_train[group]) > 0})
+        metrics_val.update({"{}_AVG".format(group): sum(self.best_val[group].values()) / len(self.best_val[group]) for group in self.metrics_val if len(self.best_val[group]) > 0})
+        self.sw_train.add_hparams(dict(hparams, set="train"), metrics_train)
+        self.sw_val.add_hparams(dict(hparams, set="val"), metrics_val)
+        try:
+            aim.set_params(hparams, name='hparams')
+        except AttributeError:
+            print("hey")
 
     def print_best(self, output_file=None):
         out = "best values after " + str(1+self.epoch) + " epochs\ntrain:"
@@ -151,6 +179,12 @@ class MetricsLogger:
         if output_file is not None:
             with open(output_file, "wt") as file:
                 file.write(out)
+
+    def close(self):
+        if self.tensorboard_dir is not None:
+            self.sw_train.close()
+            self.sw_val.close()
+        return self
 
 
 class Metric:

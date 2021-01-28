@@ -26,7 +26,7 @@ class Transformer:
             "transformer_encoder": nn.TransformerEncoder(encoder_layers, n_layers).to(device)
         }
 
-        self.model = ModularBase(modules, deep_features, directory).to(device)
+        self.model = ModularBase(modules, deep_features, "transformer", directory).to(device)
         self.model.extract_features = self.extract_features
         # self.init_weights()
 

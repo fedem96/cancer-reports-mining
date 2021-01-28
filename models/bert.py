@@ -23,7 +23,7 @@ class Bert:
             "dropout": nn.Dropout(dropout)
         }
 
-        self.model = ModularBase(modules, embedding_dim, directory).to(device)
+        self.model = ModularBase(modules, embedding_dim, "bert", directory).to(device)
         self.model.extract_features = self.extract_features
 
     def __getattr__(self, *args):

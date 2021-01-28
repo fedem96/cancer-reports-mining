@@ -11,7 +11,7 @@ from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
 
 
 class ModularBase(nn.Module):
-    def __init__(self, modules_dict, deep_features, directory=None):
+    def __init__(self, modules_dict, deep_features, model_name=None, directory=None):
         super(ModularBase, self).__init__()
         self.net = nn.ModuleDict(OrderedDict({
             **modules_dict,
@@ -44,7 +44,7 @@ class ModularBase(nn.Module):
         if directory is not None and not os.path.exists(directory):
             os.makedirs(directory)
         tb_dir = directory and os.path.join(directory, "logs")
-        self.logger = MetricsLogger(terminal='table', tensorboard_dir=tb_dir, history_size=10)
+        self.logger = MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model_name, history_size=10)
         self.optimizer = None
 
     def set_reduce_method(self, reduce_type, reduce_mode=None):
@@ -135,56 +135,60 @@ class ModularBase(nn.Module):
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
 
     def fit(self, train_data, train_labels, val_data=None, val_labels=None, **hyperparams):
-        self.update_losses(train_labels, val_labels)
-        # train_size, val_size = 8192, 8192
-        # train_data, train_labels = train_data[:train_size], train_labels.iloc[:train_size]
-        # val_data, val_labels = val_data[:val_size], val_labels.iloc[:val_size]
-
-        batch_size = hyperparams["batch_size"]
-        self.activation_penalty = hyperparams["activation_penalty"]
-        if "data_seed" in hyperparams and hyperparams["data_seed"] is not None:
-            np.random.seed(hyperparams["data_seed"])
-
-        if self.reduce_type is None or self.reduce_type == "data":
-            train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
-            if val_data is not None:
-                val_data = [torch.tensor(report, device=self.current_device()) for report in val_data]
-        else:
-            if self.reduce_type == "eval":
-                train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
-            else:
-                train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
-            if val_data is not None:
-                val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
-
-        self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
-
-        num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
         logger = self.logger
-        metrics = {"Loss": min, "Accuracy": max, "MAE": min, "M-F1": MacroF1Score, "CKS": CohenKappaScore, "DBCS": max}
-        for epoch in range(hyperparams["max_epochs"]):
-            logger.prepare(epoch, metrics)
-            perm = np.random.permutation(len(train_data))
-            # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
-            train_data = [train_data[d] for d in perm]
-            train_labels = train_labels.iloc[perm].reset_index(drop=True)
+        try:
+            self.update_losses(train_labels, val_labels)
+            # train_size, val_size = 8192, 8192
+            # train_data, train_labels = train_data[:train_size], train_labels.iloc[:train_size]
+            # val_data, val_labels = val_data[:val_size], val_labels.iloc[:val_size]
 
-            for b in range(num_batches):
-                batch = train_data[b * batch_size: (b + 1) * batch_size]
-                batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                batch_metrics = self.train_step(batch, batch_labels)
-                logger.accumulate_train(batch_metrics, num_batches)
+            batch_size = hyperparams["batch_size"]
+            self.activation_penalty = hyperparams["activation_penalty"]
+            if "data_seed" in hyperparams and hyperparams["data_seed"] is not None:
+                np.random.seed(hyperparams["data_seed"])
 
-            if val_data is not None:
-                for b in range(num_val_batches):
-                    batch = val_data[b * batch_size: (b + 1) * batch_size]
-                    batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                    batch_metrics = self.train_step(batch, batch_labels, False)
-                    logger.accumulate_val(batch_metrics, num_val_batches)
+            if self.reduce_type is None or self.reduce_type == "data":
+                train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
+                if val_data is not None:
+                    val_data = [torch.tensor(report, device=self.current_device()) for report in val_data]
+            else:
+                if self.reduce_type == "eval":
+                    train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
+                else:
+                    train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
+                if val_data is not None:
+                    val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
 
-            logger.log()
+            self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
-        return logger.close()
+            num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
+            metrics = {"Loss": min, "Accuracy": max, "MAE": min, "M-F1": MacroF1Score, "CKS": CohenKappaScore, "DBCS": max}
+            for epoch in range(hyperparams["max_epochs"]):
+                logger.prepare(epoch, metrics)
+                perm = np.random.permutation(len(train_data))
+                # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
+                train_data = [train_data[d] for d in perm]
+                train_labels = train_labels.iloc[perm].reset_index(drop=True)
+
+                for b in range(num_batches):
+                    batch = train_data[b * batch_size: (b + 1) * batch_size]
+                    batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+                    batch_metrics = self.train_step(batch, batch_labels)
+                    logger.accumulate_train(batch_metrics, num_batches)
+
+                if val_data is not None:
+                    for b in range(num_val_batches):
+                        batch = val_data[b * batch_size: (b + 1) * batch_size]
+                        batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+                        batch_metrics = self.train_step(batch, batch_labels, False)
+                        logger.accumulate_val(batch_metrics, num_val_batches)
+
+                logger.log()
+        finally:
+            logger.log_hyper_parameters_and_best_metrics(hyperparams)
+            closed_logger = logger.close()
+
+        return closed_logger
 
     def train_step(self, data, labels, training=True):
 
@@ -241,7 +245,7 @@ class ModularBase(nn.Module):
         if "features" in forwarded and self.activation_penalty != 0:
             total_loss += self.activation_penalty * forwarded["features"].abs().sum()
         if training:
-            total_loss.backward()
+            total_loss.backward()  # TODO: address loss scale
             self.optimizer.step()
         torch.set_grad_enabled(False)
         return {"Loss": losses, "Accuracy": accuracies, "MAE": maes, "M-F1": macro_f1, "CKS": cks, "DBCS": dbcs}

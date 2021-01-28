@@ -27,7 +27,7 @@ class EmbMaxLin:
             "fc": nn.Linear(num_filters[-1], deep_features).to(device)
         }
 
-        self.model = ModularBase(modules, deep_features, directory).to(device)
+        self.model = ModularBase(modules, deep_features, "embmaxlin", directory).to(device)
         self.model.extract_features = self.extract_features
 
     def __getattr__(self, *args):
