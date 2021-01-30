@@ -1,4 +1,6 @@
+import pickle
 import re
+import sys
 from multiprocessing import Pool
 
 import numpy as np
@@ -18,8 +20,8 @@ class Dataset:
         self.input_cols = None
         self.full_pipe = None
         self.data = None
-        self.classifications = None
-        self.regressions = None
+        self.classifications = []
+        self.regressions = []
         self.transformations = None
         self.mappings = None
         self.columns_codec = None
@@ -39,8 +41,12 @@ class Dataset:
             replace_nulls(dataframe, {col: "" for col in cols})
             reports = merge_and_extract(dataframe, cols)
 
-            with Pool(6) as pool:
-                data = pool.map(pipeline, reports)  # since pipeline is going to be pickled, I can't use a lambda
+            try:
+                with Pool(6) as pool:
+                    data = pool.map(pipeline, reports)  # since pipeline is going to be pickled, I can't use a lambda
+            except pickle.PicklingError:
+                print("Cannot pickle pipeline, using sequential version", file=sys.stderr)
+                data = [pipeline(r) for r in reports]
             return data
 
         self.data = caching(_df_to_data)(self.dataframe, full_pipe, self.input_cols)
@@ -82,7 +88,10 @@ class Dataset:
         labels = self.dataframe[self.classifications + self.regressions].copy()
         for column in self.classifications:
             labels[column] = self.columns_codec[column].encode_batch(labels[column])
+        for column in self.regressions:
+            labels[column] = self.columns_codec[column].encode_batch(labels[column])
         self.labels = labels
+        self._update_nunique()
 
     def cut_sequences(self, max_length):
         self.data = [sequence[:max_length] for sequence in self.data]
@@ -177,3 +186,6 @@ class Dataset:
         self._nunique = {}
         for col in self.dataframe.columns:
             self._nunique[col] = self.dataframe[col].nunique()
+        if self.labels is not None:
+            for col in self.labels.columns:
+                self._nunique[col] = self.labels[col].nunique()
