@@ -1,6 +1,6 @@
 import argparse
-import json
 from importlib import import_module
+import json
 
 from utils.chrono import Chronostep
 from utils.constants import *
@@ -89,7 +89,7 @@ for column in training.labels.columns:
     print()
 
 with Chronostep("creating model"):
-    model_name = args.name or str(datetime.now()).replace(":", ";")
+    model_name = args.name or random_name(str(args.model).split(".")[-1])
     model_dir = os.path.join(TRAINED_MODELS_DIR, model_name)
     os.makedirs(model_dir)
 
@@ -117,12 +117,18 @@ for parameter_name, parameter in model.named_parameters():
     print("\t{}: {}".format(parameter_name, parameter.numel()))
 
 hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty,
-                   "max_epochs": args.epochs, "batch_size": args.batch_size, "data_seed": args.data_seed}
+                   "max_epochs": args.epochs, "batch_size": args.batch_size}
 with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)
 
+info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed", "filter", "reduce_mode", "reduce_type"}},
+        "name": model_name}
+
+if args.data_seed is not None:
+    np.random.seed(args.data_seed)
+
 with Chronostep("training"):
-    model.fit(training.data, training.labels, validation.data, validation.labels, **hyperparameters).print_best(args.out)
+    model.fit(training.data, training.labels, validation.data, validation.labels, info, **hyperparameters).print_best(args.out)
 
 # TODO: add transformations
 # TODO: clean code and apis

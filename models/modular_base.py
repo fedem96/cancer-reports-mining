@@ -66,11 +66,11 @@ class ModularBase(nn.Module):
             self.logits_reducer = reduce_dict[reduce_mode[0]]
             self.forward = self._forward_reducing_logits
         elif reduce_type == "eval":
-            def _most_frequent(*args, **kwargs):
+            def _argmax(*args, **kwargs):
                 num_classes = args[0].shape[1]
                 return torch.nn.functional.one_hot(args[0].argmax(dim=1).mode(keepdim=True).values, num_classes)
             reduce_dict = {
-                "most_frequent": _most_frequent
+                "argmax": _argmax
             }
             assert len(reduce_mode) == 1
             self.logits_reducer = reduce_dict[reduce_mode[0]]
@@ -134,7 +134,7 @@ class ModularBase(nn.Module):
         for var in self.regressors:
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
 
-    def fit(self, train_data, train_labels, val_data=None, val_labels=None, **hyperparams):
+    def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, **hyperparams):
         logger = self.logger
         try:
             self.update_losses(train_labels, val_labels)
@@ -144,8 +144,6 @@ class ModularBase(nn.Module):
 
             batch_size = hyperparams["batch_size"]
             self.activation_penalty = hyperparams["activation_penalty"]
-            if "data_seed" in hyperparams and hyperparams["data_seed"] is not None:
-                np.random.seed(hyperparams["data_seed"])
 
             if self.reduce_type is None or self.reduce_type == "data":
                 train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
@@ -185,7 +183,7 @@ class ModularBase(nn.Module):
 
                 logger.log()
         finally:
-            logger.log_hyper_parameters_and_best_metrics(hyperparams)
+            logger.log_hyper_parameters_and_best_metrics(info, hyperparams)
             closed_logger = logger.close()
 
         return closed_logger

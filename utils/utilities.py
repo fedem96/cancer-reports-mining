@@ -1,4 +1,6 @@
 from datetime import datetime
+import random
+import string
 
 import numpy as np
 import pandas as pd
@@ -134,3 +136,8 @@ def plot_hists(df, columns, output_file=None):
     else:
         plt.savefig(output_file)
         plt.clf()
+
+
+def random_name(model_name):
+    return str(datetime.now()).split(".")[0].replace(":", ".") + " " + model_name + " " + \
+           ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))

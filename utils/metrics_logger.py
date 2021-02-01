@@ -35,7 +35,7 @@ class MetricsLogger:
             self.sw_train = SummaryWriter(os.path.join(tensorboard_dir, "train"))
             self.sw_val = SummaryWriter(os.path.join(tensorboard_dir, "val"))
         if self.log_aim:
-            aim.Session()
+            aim.Session(experiment=aim_name)
 
     def prepare(self, epoch, metrics_groups):
         self.start = timer()
@@ -155,15 +155,18 @@ class MetricsLogger:
                     value = value()
                 aim.track(value, name=group.replace("-", ""), epoch=self.epoch, var=metric, dataset='val')
 
-    def log_hyper_parameters_and_best_metrics(self, hparams):
+    def log_hyper_parameters_and_best_metrics(self, info, hparams):
         metrics_train = {"{}_{}".format(group, metric): self.best_train[group][metric] for group in self.best_train for metric in self.best_train[group]}
         metrics_val = {"{}_{}".format(group, metric): self.best_val[group][metric] for group in self.best_val for metric in self.best_val[group]}
         metrics_train.update({"{}_AVG".format(group): sum(self.best_train[group].values()) / len(self.best_train[group]) for group in self.metrics_train if len(self.best_train[group]) > 0})
         metrics_val.update({"{}_AVG".format(group): sum(self.best_val[group].values()) / len(self.best_val[group]) for group in self.metrics_val if len(self.best_val[group]) > 0})
-        self.sw_train.add_hparams(dict(hparams, set="train"), metrics_train)
-        self.sw_val.add_hparams(dict(hparams, set="val"), metrics_val)
+        self.sw_train.add_hparams(dict(hparams, set="train"), {"best/"+k: v for k,v in metrics_train.items()})
+        self.sw_val.add_hparams(dict(hparams, set="val"), {"best/"+k: v for k,v in metrics_val.items()})
         try:
+            aim.set_params(info, name='info')
             aim.set_params(hparams, name='hparams')
+            aim.set_params({k.replace("-", "").lower().replace("accuracy", "acc"): v for k,v in metrics_train.items()}, name='train')
+            aim.set_params({k.replace("-", "").lower().replace("accuracy", "acc"): v for k,v in metrics_val.items()}, name='val')
         except AttributeError:
             print("hey")
 
