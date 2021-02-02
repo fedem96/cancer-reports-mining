@@ -58,7 +58,7 @@ df.loc[df.index[df["modalita_T"].apply(lambda v: v not in {"E", "R"})], "modalit
 df.loc[df.index[df["modalita_N"].apply(lambda v: v not in {"E", "R"})], "modalita_N"] = np.NaN
 
 ''' clean "stadio_T" column '''
-df.loc[df.index[df["stadio_T"].apply(lambda v: v == "X")], "stadio_T"] = np.NaN
+df.loc[df.index[df["stadio_T"].apply(lambda v: v == "X" or v == "A")], "stadio_T"] = np.NaN
 df["stadio_T"] = df["stadio_T"].apply(lambda v: str(v).replace(" ", "").upper() if pd.notna(v) else None)
 
 ''' clean "stadio_N" column '''
