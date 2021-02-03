@@ -23,6 +23,8 @@ parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
+parser.add_argument("-im", "--input-mappings", help="how to map the input", default={}, type=json.loads)
+parser.add_argument("-it", "--input-transformations", help="how to transform the input", default={}, type=json.loads)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
@@ -30,14 +32,15 @@ parser.add_argument("-ns", "--net-seed", help="seed for model random weights gen
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
-parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str, required=True)
+parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str)
 parser.add_argument("-rt", "--reduce-type", help="what to reduce", default=None, type=str,
-                    choices=["data", "features", "logits", "eval"], required=True)
+                    choices=["data", "features", "logits", "eval"])
 parser.add_argument("-tc", "--train-classifications", help="list of classifications", default=[], nargs="+", type=str)
 parser.add_argument("-tr", "--train-regressions", help="list of regressions", default=[], nargs="+", type=str)
 args = parser.parse_args()
 print("args:", vars(args))
-assert args.reduce_mode in {"data": {"most_recent"}, "features": {"max"}, "logits": {"mean"}, "eval": {"argmax"}}[args.reduce_type]  # TODO: multiple reduce modes
+if args.group_by is not None:
+    assert args.reduce_mode in {"data": {"most_recent"}, "features": {"max"}, "logits": {"mean"}, "eval": {"argmax"}}[args.reduce_type]  # TODO: multiple reduce modes
 
 p = Preprocessor.get_default()
 t = Tokenizer()
@@ -46,7 +49,7 @@ tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
 with Chronostep("reading input"):
 
     classifications, regressions = args.train_classifications, args.train_regressions
-    transformations, mappings = {}, {}
+    transformations, mappings = args.input_transformations, args.input_mappings
 
 with Chronostep("encoding reports"):
     input_cols = ["diagnosi", "macroscopia", "notizie"]
@@ -122,7 +125,7 @@ with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)
 
 info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed", "filter", "reduce_mode", "reduce_type"}},
-        "name": model_name}
+        "name": model_name, "dataset": args.dataset_dir.split(".")[-1]}
 
 if args.data_seed is not None:
     np.random.seed(args.data_seed)

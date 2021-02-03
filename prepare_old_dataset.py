@@ -2,66 +2,70 @@ import argparse
 import os
 
 import pandas as pd
+from pandasql import sqldf
 
 from utils.constants import *
+from utils.idf import InverseFrequenciesCounter
+from utils.tokenizing import TokenCodecCreator
 from utils.utilities import *
 
-# csv = [filename,
-#         types,
-#         converters,
-#         dates_format,
-#         handle_nans]
 
 parser = argparse.ArgumentParser(description='Clean and prepare the old dataset (the one with all cancer types)')
+parser.add_argument("-c", "--codec", help="filename where to save the token codec", default=TOKEN_CODEC, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", default=os.path.join(DATASETS_DIR, OLD_DATASET), type=str)
-parser.add_argument("-i", "--histologies", help="histologies file", default=OLD_HISTOLOGIES_FILE, type=str)
-parser.add_argument("-n", "--neoplasms", help="neoplasms file", default=OLD_NEOPLASMS_FILE, type=str)
+parser.add_argument("-i", "--idf", help="filename where to save Inverse Document Frequencies", default=IDF, type=str)
+parser.add_argument("-hist", "--histologies", help="histologies file", default=OLD_HISTOLOGIES_FILE, type=str)
+parser.add_argument("-neop", "--neoplasms", help="neoplasms file", default=OLD_NEOPLASMS_FILE, type=str)
 args = parser.parse_args()
 
-csv1 = [args.histologies,
-        "ISO-8859-1",
-        {"id_neopl": 'Int64', "notizie": str, "diagnosi": str, "macroscopia": str}]
+print("reading raw data")
 
+df_hists = pd.read_csv(args.histologies, encoding="ISO-8859-1",
+                    dtype={"id_neopl": 'Int64', "id_tot": 'Int64', "diagnosi": str, "macroscopia": str, "notizie": str},
+                    usecols=["id_neopl", "id_tot", "diagnosi", "macroscopia", "notizie"])
 
-csv2 = [args.neoplasms,
-        "ISO-8859-1",
-        {"id_neopl": 'Int64', "stadio": 'Int64', "dimensioni": float, "sede_icdo3": str, "morfologia_icdo3": str},
-        {},
-        {"anno_archivio": "%y", "data_incidenza": "%Y-%m-%d", "data_intervento": "%Y-%m-%d"},
-        {},
-        ','
-        ]
+dates_format = {"anno_archivio": "%y", "data_incidenza": "%Y-%m-%d", "data_intervento": "%Y-%m-%d"}
+df_neopls = pd.read_csv(args.neoplasms, encoding="ISO-8859-1",
+                        dtype={"id_neopl": 'Int64', "id_tot": 'Int64', "sede_icdo3": str, "morfologia_icdo3": str},
+                        usecols=["id_neopl", "id_tot", "anno_archivio", "data_incidenza", "data_intervento", "sede_icdo3", "morfologia_icdo3"],
+                        converters={col: (lambda d, f=format: convert_date(d, f)) for col, format in dates_format.items()},
+                        decimal=",")
 
+print("merging data")
+dataset = df_hists.merge(df_neopls, how='inner', on=['id_tot', 'id_neopl']).dropna(subset=['data_incidenza'])
 
-df1 = read_csv(*csv1)
+print("cleaning data")
+dataset['anno'] = dataset["data_incidenza"].apply(lambda x: x.year)
+dataset = dataset.drop(columns=['anno_archivio', 'data_incidenza', 'data_intervento'])
+dataset = dataset.drop(dataset[dataset.anno < 1980].index)
+input_cols = ['diagnosi', 'macroscopia', 'notizie']
+replace_nulls(dataset, {col: "" for col in input_cols})
+for col in input_cols:
+    dataset[col] = dataset[col].apply(lambda text: text.strip())
+dataset.drop(dataset[(dataset["diagnosi"] == "") & (dataset["macroscopia"] == "") & (dataset["notizie"] == "")].index, inplace=True)
 
-df2 = read_csv(*csv2)
-df2["anno"] = df2["anno_archivio"]
-df2.loc[df2["anno"].isnull(), "anno"] = df2.loc[df2["anno"].isnull(), "data_incidenza"]
-df2.loc[df2["anno"].isnull(), "anno"] = df2.loc[df2["anno"].isnull(), "data_intervento"]
+print("splitting dataset into train, validation, test and unsupervised")
+dfTrain, dfTest = train_test_split(dataset, "anno", test_from_year=2009)
+dfTrain, dfVal = train_test_split(dfTrain, "anno", test_from_year=2008)
+# train:  70780 samples
+# val:    10952 samples
+# test:   12719 samples
 
-df2 = df2.drop(columns=['anno_archivio', 'data_incidenza', 'data_intervento'])
-df2 = df2.drop(df2.index[df2["anno"].isnull()])
-df2["anno"] = pd.DatetimeIndex(df2['anno']).year
-df2 = df2.drop(df2.index[df2["anno"] < 1980])
-
-df2 = df2.merge(df1, how='inner')
-
-dfTrain, dfTest = train_test_split(df2, "anno", 2008)
-# train:  70836 samples
-# test:   23671 samples
-
-
-dfUnsup = df1[df1["id_neopl"].isnull()]             # 1496896 samples
+dfUnsup = df_hists[~df_hists.id_neopl.isin(set(dataset.id_neopl.unique()))]      # 1497881 samples
 dfUnsup = dfUnsup.drop(columns=["id_neopl"])
 # TODO: add an index to unsupervised csv
 
+print("saving cleaned csv")
 if not os.path.exists(args.dataset_dir): os.makedirs(args.dataset_dir)
-
 dfTrain.to_csv(os.path.join(args.dataset_dir, TRAINING_SET), index=False)
+dfVal.to_csv(os.path.join(args.dataset_dir, VALIDATION_SET), index=False)
 dfTest.to_csv(os.path.join(args.dataset_dir, TEST_SET), index=False)
 dfUnsup.to_csv(os.path.join(args.dataset_dir, UNSUPERVISED_SET), index=False)
 
 
-#df2["anno"].value_counts().sort_index().plot(kind="bar")
-#plt.show()
+print("generating codec")
+texts = merge_and_extract(dfTrain, input_cols)
+TokenCodecCreator().create_codec(texts).save(os.path.join(args.dataset_dir, args.codec))
+
+print("generating idf")
+InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))

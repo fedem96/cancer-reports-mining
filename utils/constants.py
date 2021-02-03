@@ -6,11 +6,11 @@ DATASETS_DIR = "datasets"
 TRAINED_MODELS_DIR = "trained_models"
 CACHE_DIR = ".cache"
 
-OLD_DATASET = "all_cancer_types_2007"
+OLD_DATASET = "all_cancer_types"
 OLD_HISTOLOGIES_FILE = os.path.join(RAW_DIR, "ISTOLOGIE_corr.csv")
 OLD_NEOPLASMS_FILE = os.path.join(RAW_DIR, "RTRT_NEOPLASI_corr.csv")
 
-NEW_DATASET = "breast_and_colon_cancer_2015"
+NEW_DATASET = "breast_cancer"
 NEW_DATA_FILE = os.path.join(RAW_DIR, "dati.csv")
 
 # GLOVE_FILE = os.path.join(DATA_DIR, "glove.xxx")
