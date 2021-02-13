@@ -2,6 +2,8 @@ import argparse
 from importlib import import_module
 import json
 
+from callbacks.logger import MetricsLogger
+from callbacks.model_checkpoint import ModelCheckpoint
 from utils.chrono import Chronostep
 from utils.constants import *
 from utils.dataset import Dataset
@@ -31,7 +33,7 @@ parser.add_argument("-ma", "--model-args", help="model to train", default=None, 
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
-parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str)
+parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
 parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str)
 parser.add_argument("-rt", "--reduce-type", help="what to reduce", default=None, type=str,
                     choices=["data", "features", "logits", "eval"])
@@ -101,7 +103,7 @@ with Chronostep("creating model"):
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
-    model_args = {"vocab_size": tc.num_tokens()+1, "directory": model_dir}
+    model_args = {"vocab_size": tc.num_tokens()+1}
     if args.model_args is not None:
         model_args.update(args.model_args)
     if args.net_seed is not None:
@@ -130,8 +132,12 @@ info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed",
 if args.data_seed is not None:
     np.random.seed(args.data_seed)
 
+tb_dir = os.path.join(model_dir, "logs")
+callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),
+             ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True)]
+
 with Chronostep("training"):
-    model.fit(training.data, training.labels, validation.data, validation.labels, info, **hyperparameters).print_best(args.out)
+    model.fit(training.data, training.labels, validation.data, validation.labels, info, callbacks, **hyperparameters)
 
 # TODO: add transformations
 # TODO: clean code and apis

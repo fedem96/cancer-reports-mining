@@ -1,18 +1,26 @@
-import os
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from collections import OrderedDict
+from typing import List
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 
-from utils.metrics_logger import MetricsLogger, MacroF1Score, CohenKappaScore
+from callbacks.base_callback import Callback
+from metrics.accuracy import Accuracy
+from metrics.average import Average
+from metrics.cks import CohenKappaScore
+from metrics.dbcs import DumbBaselineComparisonScore
+from metrics.mae import MeanAverageError
+from metrics.metrics import Metrics
+from metrics.mf1 import MacroF1Score
 
 
-class ModularBase(nn.Module):
-    def __init__(self, modules_dict, deep_features, model_name=None, directory=None):
+class ModularBase(nn.Module, ABC):
+    def __init__(self, modules_dict, deep_features, model_name):
         super(ModularBase, self).__init__()
+        self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
             **modules_dict,
             "classifiers": nn.ModuleDict({}),
@@ -29,8 +37,6 @@ class ModularBase(nn.Module):
                 raise NameError("Name {} unavailable".format(module_name))
             setattr(self, module_name, modules_dict[module_name])
 
-        # self.ce = nn.CrossEntropyLoss()
-        # self.l2 = nn.MSELoss()
         self.losses = {}
         self.dumb_baseline_train_accuracy = {}
         self.dumb_baseline_val_accuracy = {}
@@ -41,11 +47,10 @@ class ModularBase(nn.Module):
         self.logits_reducer = None
         self.forward = self._forward_simple
 
-        if directory is not None and not os.path.exists(directory):
-            os.makedirs(directory)
-        tb_dir = directory and os.path.join(directory, "logs")
-        self.logger = MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model_name, history_size=10)
         self.optimizer = None
+
+        self.classification_metrics = ["Accuracy", "Accuracy", "M-F1", "CKS", "DBCS"]
+        self.regression_metrics = ["MAE"]
 
     def set_reduce_method(self, reduce_type, reduce_mode=None):
         if type(reduce_mode) != list and type(reduce_mode) != tuple:
@@ -134,11 +139,11 @@ class ModularBase(nn.Module):
         for var in self.regressors:
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
 
-    def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, **hyperparams):
-        logger = self.logger
+    def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, callbacks: List[Callback]=[], **hyperparams):
+        [c.on_fit_start(self) for c in callbacks]
         try:
             self.update_losses(train_labels, val_labels)
-            # train_size, val_size = 8192, 8192
+            # train_size, val_size = 1024, 1024
             # train_data, train_labels = train_data[:train_size], train_labels.iloc[:train_size]
             # val_data, val_labels = val_data[:val_size], val_labels.iloc[:val_size]
 
@@ -160,35 +165,40 @@ class ModularBase(nn.Module):
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
-            metrics = {"Loss": min, "Accuracy": max, "MAE": min, "M-F1": MacroF1Score, "CKS": CohenKappaScore, "DBCS": max}
+            train_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(True), **self.create_regression_metrics()})
+            val_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(False), **self.create_regression_metrics()})
             for epoch in range(hyperparams["max_epochs"]):
-                logger.prepare(epoch, metrics)
+                [c.on_epoch_start(self, epoch) for c in callbacks]
+                train_metrics.reset(), val_metrics.reset()
                 perm = np.random.permutation(len(train_data))
                 # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
                 train_data = [train_data[d] for d in perm]
                 train_labels = train_labels.iloc[perm].reset_index(drop=True)
 
+                [c.on_train_epoch_start(self, epoch) for c in callbacks]
                 for b in range(num_batches):
+                    [c.on_train_batch_start(self) for c in callbacks]
                     batch = train_data[b * batch_size: (b + 1) * batch_size]
                     batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                    batch_metrics = self.train_step(batch, batch_labels)
-                    logger.accumulate_train(batch_metrics, num_batches)
+                    self.train_step(batch, batch_labels, metrics=train_metrics.metrics)
+                    [c.on_train_batch_end(self, train_metrics.metrics) for c in callbacks]
+                [c.on_train_epoch_end(self, epoch, train_metrics.metrics) for c in callbacks]
 
                 if val_data is not None:
+                    [c.on_validation_epoch_start(self, epoch) for c in callbacks]
                     for b in range(num_val_batches):
+                        [c.on_validation_batch_start(self) for c in callbacks]
                         batch = val_data[b * batch_size: (b + 1) * batch_size]
                         batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                        batch_metrics = self.train_step(batch, batch_labels, False)
-                        logger.accumulate_val(batch_metrics, num_val_batches)
+                        self.train_step(batch, batch_labels, metrics=val_metrics.metrics, training=False)
+                        [c.on_validation_batch_end(self, val_metrics.metrics) for c in callbacks]
+                    [c.on_validation_epoch_end(self, epoch, val_metrics.metrics) for c in callbacks]
 
-                logger.log()
+                [c.on_epoch_end(self, epoch) for c in callbacks]
         finally:
-            logger.log_hyper_parameters_and_best_metrics(info, hyperparams)
-            closed_logger = logger.close()
+            [c.on_fit_end(self) for c in callbacks]
 
-        return closed_logger
-
-    def train_step(self, data, labels, training=True):
+    def train_step(self, data, labels, metrics={}, training=True):
 
         if training:
             self.optimizer.zero_grad()
@@ -204,11 +214,6 @@ class ModularBase(nn.Module):
                 forwarded = self(data)
 
         losses = {}
-        accuracies = {}
-        maes = {}
-        macro_f1 = {}
-        cks = {}
-        dbcs = {}
         device = self.current_device()
 
         total_loss = torch.tensor([0.0], device=self.current_device())
@@ -219,15 +224,16 @@ class ModularBase(nn.Module):
                 continue
             preds = forwarded[var][mask]
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
-            loss = self.losses[var](preds, grth)# / np.log2(self.num_classes[var])
+            loss = self.losses[var](preds, grth)
             losses[var] = loss.detach().item()
             total_loss += loss
-            preds_classes = torch.argmax(preds.detach(), axis=1)
-            accuracies[var] = (preds_classes == grth).float().mean().detach().item()
-            macro_f1[var] = [preds_classes.cpu().numpy(), grth.cpu().numpy()]
-            cks[var] = [preds_classes.cpu().numpy(), grth.cpu().numpy()]
-            dumb_baseline_accuracy = self.dumb_baseline_train_accuracy[var] if training else self.dumb_baseline_val_accuracy[var]
-            dbcs[var] = (accuracies[var] - dumb_baseline_accuracy) / (1 - dumb_baseline_accuracy)
+            
+            grth = grth.cpu().numpy()
+            preds_classes = torch.argmax(preds.detach(), dim=1).cpu().numpy()
+
+            metrics["Loss"][var].update(losses[var], len(grth))
+            for metric_name in self.classification_metrics:
+                metrics[metric_name][var].update(preds_classes, grth)
 
         for var in self.regressors:
             mask = ~labels[var].isnull()
@@ -238,21 +244,51 @@ class ModularBase(nn.Module):
             loss = self.losses[var](preds, grth)
             losses[var] = loss.item()
             total_loss += loss
-            maes[var] = (preds.detach() - grth).abs().mean().item()
+
+            metrics["Loss"][var].update(losses[var], len(grth))
+            for metric_name in self.regression_metrics.keys():
+                metrics[metric_name][var].update(preds.cpu().numpy(), grth.cpu().numpy())
 
         if "features" in forwarded and self.activation_penalty != 0:
             total_loss += self.activation_penalty * forwarded["features"].abs().sum()
         if training:
             total_loss.backward()  # TODO: address loss scale
             self.optimizer.step()
-        torch.set_grad_enabled(False)
-        return {"Loss": losses, "Accuracy": accuracies, "MAE": maes, "M-F1": macro_f1, "CKS": cks, "DBCS": dbcs}
+        return None
 
     def add_classification(self, task_name, num_classes):
         self.classifiers[task_name] = nn.Linear(self.deep_features, num_classes).to(self.current_device())
 
     def add_regression(self, task_name):
         self.regressors[task_name] = nn.Linear(self.deep_features, 1).to(self.current_device())
+
+    def __str__(self):
+        str_dict = {}
+        str_dict["name"] = {self.model_name}
+        str_dict["tot_parameters"] = sum([p.numel() for p in self.parameters()])
+        str_dict["parameters"] = {}
+        for parameter_name, parameter in self.named_parameters():
+            str_dict["parameters"][parameter_name] = parameter.numel()
+        return str(str_dict)
+
+    def create_losses(self):
+        return {
+            "Loss": {var: Average(min) for var in list(self.classifiers.keys()) + list(self.regressors.keys())}
+        }
+
+    def create_classification_metrics(self, training: bool):
+        dbcs = self.dumb_baseline_train_accuracy if training else self.dumb_baseline_val_accuracy
+        return {
+            "Accuracy": {var: Accuracy() for var in self.classifiers},
+            "M-F1": {var: MacroF1Score() for var in self.classifiers},
+            "CKS": {var: CohenKappaScore() for var in self.classifiers},
+            "DBCS": {var: DumbBaselineComparisonScore(dbcs[var]) for var in self.classifiers}
+        }
+
+    def create_regression_metrics(self):
+        return {
+            "MAE": {var: MeanAverageError() for var in self.regressors}
+        }
 
     @DeprecationWarning
     def infer(self, x):

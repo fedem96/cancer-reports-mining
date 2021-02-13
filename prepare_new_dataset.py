@@ -22,6 +22,8 @@ parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned datas
 parser.add_argument("-r", "--raw-csv", help="raw csv file to process", default=NEW_DATA_FILE, type=str)
 args = parser.parse_args()
 
+print("reading raw data")
+
 df = pd.read_csv(args.raw_csv, delimiter="|", quotechar="'", encoding="ISO-8859-1", dtype={"anno_referto": "Int64"})
 df = df.rename(columns={"Year_of_diagnosis": "anno_diagnosi"})
 print("cleaning data")
