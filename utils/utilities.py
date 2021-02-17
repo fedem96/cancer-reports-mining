@@ -4,6 +4,7 @@ import string
 
 import numpy as np
 import pandas as pd
+import torch
 
 
 def convert_date(date_str, format):
@@ -185,5 +186,11 @@ def plot_hists(df, columns, output_file=None):
 
 
 def random_name(model_name):
-    return str(datetime.now()).split(".")[0].replace(":", ".") + " " + model_name + " " + \
+    return str(datetime.now()).split(".")[0].replace(":", ".").replace(" ", "_") + "_" + model_name + "_" + \
            ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+
+def to_gpu_if_available(model):
+    if torch.cuda.is_available():
+        return model.to("cuda")
+    return model

@@ -3,3 +3,4 @@ data_raw
 datasets
 *.pyc
 .cache
+*__pycache__*

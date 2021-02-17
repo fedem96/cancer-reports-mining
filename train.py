@@ -1,6 +1,6 @@
 import argparse
-from importlib import import_module
 import json
+from importlib import import_module
 
 from callbacks.logger import MetricsLogger
 from callbacks.model_checkpoint import ModelCheckpoint
@@ -20,7 +20,10 @@ parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling",
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=50, type=int)
 parser.add_argument("-f", "--filter",
                     help="report filtering strategy",
-                    default=None, type=str, choices=['same_year'], metavar='STRATEGY')
+                    default=None, type=str, choices=['same_year', 'classifier'], metavar='STRATEGY')
+parser.add_argument("-fa", "--filter-args",
+                    help="args for report filtering strategy",
+                    default=None, type=json.loads)
 parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
@@ -48,6 +51,8 @@ p = Preprocessor.get_default()
 t = Tokenizer()
 tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
 
+DATA_COL = "encoded_data"
+
 with Chronostep("reading input"):
 
     classifications, regressions = args.train_classifications, args.train_regressions
@@ -66,31 +71,35 @@ with Chronostep("encoding reports"):
     for set_name in ["train", "val"]:
         dataset = sets[set_name]
         dataset.set_input_cols(input_cols)
-        dataset.process_records(full_pipe)
+        dataset.add_encoded_column(full_pipe, DATA_COL, args.max_length)
         dataset.prepare_for_training(classifications, regressions, transformations, mappings)
         if set_name == "train":
             columns_codec = dataset.get_columns_codec()
         else:
             dataset.set_columns_codec(columns_codec)
         dataset.encode_labels()
-        if args.max_length is not None:
-            dataset.cut_sequences(args.max_length)
 
         if args.group_by is not None and (args.reduce_type != "eval" or set_name != "train"):
-            dataset.group_by(args.group_by)
+
+            dataset.lazy_group_by(args.group_by)
 
             if args.filter is not None:
-                dataset.filter(args.filter)
+                dataset.lazy_filter(args.filter, args.filter_args)
+
             if args.reduce_type == "data":
-                dataset.reduce(args.reduce_mode)
+                dataset.lazy_reduce(args.reduce_mode)
+
+            dataset.compute_lazy()
 
     training, validation = sets["train"], sets["val"]
     if args.group_by is not None and args.reduce_type != "eval":
         training.assert_disjuncted(validation)
 
+training_labels = training.get_labels()
+
 print("train labels distribution:")
-for column in training.labels.columns:
-    print(training.labels[column].value_counts())
+for column in training.get_labels_columns():
+    print(training_labels[column].value_counts()) #TODO:correct
     print()
 
 with Chronostep("creating model"):
@@ -103,12 +112,13 @@ with Chronostep("creating model"):
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
-    model_args = {"vocab_size": tc.num_tokens()+1}
+    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc}
     if args.model_args is not None:
         model_args.update(args.model_args)
     if args.net_seed is not None:
         model_args.update({"net_seed": args.net_seed})
     model = Model(**model_args)
+    model = to_gpu_if_available(model)
     model.set_reduce_method(args.reduce_type, args.reduce_mode)
 
     for cls_var in classifications:
@@ -137,7 +147,7 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
              ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True)]
 
 with Chronostep("training"):
-    model.fit(training.data, training.labels, validation.data, validation.labels, info, callbacks, **hyperparameters)
+    model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation.get_labels(), info, callbacks, **hyperparameters)
 
 # TODO: add transformations
 # TODO: clean code and apis

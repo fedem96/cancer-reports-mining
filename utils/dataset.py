@@ -5,9 +5,11 @@ from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
+import torch
 
 from utils.cache import caching
 from utils.labels_codec import LabelsCodec
+from utils.serialization import load
 from utils.utilities import replace_nulls, merge_and_extract
 
 
@@ -17,9 +19,9 @@ class Dataset:
         self.csv_file = csv_file
         self.dataframe = pd.read_csv(csv_file)
         self.dataframe.columns = self.dataframe.columns.str.replace('%', '%25')  # TODO: change
-        self.input_cols = None
+        self.input_cols = []
+        self.encoded_input_cols = []
         self.full_pipe = None
-        self.data = None
         self.classifications = []
         self.regressions = []
         self.transformations = None
@@ -30,14 +32,21 @@ class Dataset:
         self.key_to_index = None
         self._nunique = None
         self._update_nunique()
+        self.grouping_attributes = None
+        self.filtering_columns = []
+        self.reducing_strategy = None
+        self.reducing_args = None
 
     def set_input_cols(self, input_cols):
         self.input_cols = input_cols
 
-    def process_records(self, full_pipe):
+    def add_encoded_column(self, full_pipe, new_column_name, max_length=None):
         self.full_pipe = full_pipe
 
         def _df_to_data(dataframe, pipeline, cols):
+            if type(dataframe) == list:
+                return [_df_to_data(d, pipeline, cols) for d in dataframe]
+
             replace_nulls(dataframe, {col: "" for col in cols})
             reports = merge_and_extract(dataframe, cols)
 
@@ -49,7 +58,15 @@ class Dataset:
                 data = [pipeline(r) for r in reports]
             return data
 
-        self.data = caching(_df_to_data)(self.dataframe, full_pipe, self.input_cols)
+        new_column = caching(_df_to_data)(self.dataframe, full_pipe, self.input_cols)
+        if type(self.dataframe) == list:
+            for df, new_col in zip(self.dataframe, new_column):
+                df[new_column_name] = new_col
+        else:
+            self.dataframe[new_column_name] = new_column
+        if max_length is not None:
+            self.dataframe[new_column_name] = [sequence[:max_length] for sequence in self.dataframe[new_column_name]]
+        self.encoded_input_cols.append(new_column_name)
 
     def prepare_for_training(self, classifications=[], regressions=[], transformations={}, mappings={}):
         self.classifications, self.regressions = classifications, regressions
@@ -85,99 +102,174 @@ class Dataset:
         self.columns_codec = columns_codec
 
     def encode_labels(self):
-        labels = self.dataframe[self.classifications + self.regressions].copy()
         for column in self.classifications:
-            labels[column] = self.columns_codec[column].encode_batch(labels[column])
+            self.dataframe[column] = self.columns_codec[column].encode_batch(self.dataframe[column])
         for column in self.regressions:
-            labels[column] = self.columns_codec[column].encode_batch(labels[column])
-        self.labels = labels
+            self.dataframe[column] = self.columns_codec[column].encode_batch(self.dataframe[column])
         self._update_nunique()
 
-    def cut_sequences(self, max_length):
-        self.data = [sequence[:max_length] for sequence in self.data]
+    def get_labels_columns(self):
+        return self.classifications + self.regressions
+
+    def get_labels(self):
+        if type(self.dataframe) == list:
+            return pd.concat([df[self.get_labels_columns()].head(1) for df in self.dataframe])
+        return self.dataframe[self.get_labels_columns()]
+
+    def get_data(self, column_name):
+        if type(self.dataframe) == list:
+            return [df[column_name].values[0] for df in self.dataframe]
+        return self.dataframe[column_name].values[0]
 
     def group_by(self, attributes):
 
-        def _group_by(self_dataframe, self_data, self_labels, attrs):
+        def _group_by(self_dataframe, attrs):
             index_to_key = {}
             key_to_index = {}
             grouped = self_dataframe.groupby(attrs)
-            data = [[] for i in range(grouped.ngroups)]
-            labels = pd.DataFrame(index=range(grouped.ngroups), columns=self_labels.columns)
             for index, (key, group) in enumerate(grouped):
                 index_to_key[index] = key
                 key_to_index[key] = index
-                group_index = group.index
 
-                for col in self_labels.columns:
-                    labels.loc[index, col] = self_labels.at[group_index[0], col]
+            dataframe = []
+            for key, group in grouped:
+                dataframe.append(group)
+            return index_to_key, key_to_index, dataframe
 
-                for i in group_index:
-                    data[index].append(self_data[i])
-            return index_to_key, key_to_index, grouped, data, labels
+        self.index_to_key, self.key_to_index, self.dataframe = caching(_group_by)(self.dataframe, attributes)
 
-        self.index_to_key, self.key_to_index, self.dataframe, self.data, self.labels = caching(_group_by)(self.dataframe, self.data, self.labels, attributes)
+    def lazy_group_by(self, attributes):
+        if self.grouping_attributes is not None:
+            raise Exception("Already grouped: cannot group twice")
+        self.grouping_attributes = attributes
+
 
     def assert_disjuncted(self, other_dataset):
         assert len(set(self.key_to_index.keys()).intersection(other_dataset.key_to_index.keys())) == 0
         # number of patients in both sets: len( set(list(zip(*list(self.key_to_index.keys())))[0]).intersection(set(list(zip(*list(other_dataset.key_to_index.keys())))[0])) )
 
-    def filter(self, filter_strategy):
-        def _filter(self_dataframe, self_data, filter_strat):
+    def filter(self, filter_strategy, filter_args=None):
+        def _filter(self_dataframe, filter_strat, f_args):
             if callable(filter_strat):
                 filter_fn = filter_strat
             elif type(filter_strat) == str:
-                def _same_year(record, group_df):
+                if filter_strat == "classifier":
+                    model = load(filter_args["path"])
+                    model.eval()
+                    self.add_encoded_column(model.encode_report, filter_args["encoded_data_column"], filter_args["max_length"])
+                def _same_year(group_df, *args):
                     mask = group_df['anno_referto'].values == group_df['anno_diagnosi'].values
                     if not any(mask):
                         mask = ~mask
-                    record = [r for (r, b) in zip(record, mask) if b]
                     group_df = group_df[mask] # TODO: this line is slow
-                    return record, group_df
-                filter_dict = {"same_year": _same_year}
+                    return group_df
+                def _with_classifier(group_df, fa):
+                    encoded_data_column = fa["encoded_data_column"]
+                    torch_record = [torch.tensor(report) for report in group_df[encoded_data_column]]
+                    mask = model(torch_record)['sede_icdo3'].argmax(dim=1).cpu().numpy().astype(bool)
+                    if any(mask):
+                        group_df = group_df[mask]
+                    return group_df
+                filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
                 filter_fn = filter_dict[filter_strat]
             else:
                 raise ValueError("Invalid filter method")
-            data = []
             dataframe = []
-            for (key, group), record in zip(self_dataframe, self_data):
-                r, g = filter_fn(record, group)
+            for key, group in self_dataframe:
+                r, g = filter_fn(group, f_args)
                 dataframe.append((key, g))
-                data.append(record)
-            assert len(self_data) == len(data)
-            assert len(dataframe) == len(data)
-            return dataframe, data
-        self.dataframe, self.data = _filter(self.dataframe, self.data, filter_strategy) # TODO: cache
+            return dataframe
+        self.dataframe = _filter(self.dataframe, filter_strategy, filter_args)
 
-    def reduce(self, reduce_strategy):
-        def _reduce(self_dataframe, self_data, reduce_strat):
+    def lazy_filter(self, filter_strategy, filter_args=None):
+        def _filter(self_dataframe, filter_strat, f_args):
+            if callable(filter_strat):
+                filter_fn = filter_strat
+            elif type(filter_strat) == str:
+                if filter_strat == "classifier":
+                    model = load(filter_args["path"])
+                    model.eval()
+                    self.add_encoded_column(model.encode_report, filter_args["encoded_data_column"], filter_args["max_length"])
+                def _same_year(df, *args):
+                    return df['anno_referto'].values == df['anno_diagnosi'].values
+                def _with_classifier(df, fa):
+                    encoded_data_column = fa["encoded_data_column"]
+                    torch_reports = [torch.tensor(report, device=model.current_device()) for report in df[encoded_data_column]]
+                    batch_size = 64
+                    filter_result = []
+                    for i in range(0, len(torch_reports), batch_size):
+                        batch = torch_reports[i: min(i+batch_size, len(torch_reports))]
+                        filter_result.append( model(batch)['sede_icdo3'].argmax(dim=1).cpu().numpy().astype(bool) )
+                    return np.concatenate(filter_result)
+                filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
+                filter_fn = filter_dict[filter_strat]
+            else:
+                raise ValueError("Invalid filter method")
+            return filter_fn(self_dataframe, f_args)
+
+        filter_result = _filter(self.dataframe, filter_strategy, filter_args)
+        filtering_column_name = "_filter_" + str(len(self.filtering_columns))
+        self.filtering_columns.append(filtering_column_name)
+        self.dataframe[filtering_column_name] = filter_result
+
+    def filter_now(self):
+        def _filter(self_dataframe, filtering_columns):
+            dataframe = []
+            for group in self_dataframe:
+                mask = group[filtering_columns].prod(axis=1).astype(bool)
+                if any(mask):
+                    dataframe.append(group[mask])
+                else:
+                    dataframe.append(group)
+            return dataframe
+
+        self.dataframe = _filter(self.dataframe, self.filtering_columns)
+
+    def reduce(self, reduce_strategy, reduce_args=None):
+        def _reduce(self_dataframe, reduce_strat, r_args):
             if callable(reduce_strat):
                 reduce_fn = reduce_strat
             elif type(reduce_strat) == str:
-                def _most_recent(record, group_df):
+                def _most_recent(group_df, ra):
                     mr_year = max(group_df['anno_referto'].values)
                     mask = group_df['anno_referto'].values == mr_year
                     if not any(mask):
                         mask = ~mask
                     group_df = group_df[mask] # TODO: this line is slow
-                    record = [r for (r, b) in zip(record, mask) if b]
-                    if len(record) > 1:
+                    if len(group_df) > 1:
                         mr_isto = max(group_df['id_isto'].values)
                         mask = group_df['id_isto'].values == mr_isto
-                        record = [r for (r, b) in zip(record, mask) if b]
-                        # group_df = group_df[mask]
-                    assert len(record) == 1
-                    return record[0]
+                        group_df = group_df[mask]
+                    assert len(group_df) == 1
+                    return group_df
                 reduce_dict = {"most_recent": _most_recent}
                 reduce_fn = reduce_dict[reduce_strat]
             else:
                 raise ValueError("Invalid reduce method")
-            data = []
-            for (key, group), record in zip(self_dataframe, self_data):
-                data.append(reduce_fn(record, group))
-            assert len(self_data) == len(data)
-            return data
-        self.data = caching(_reduce)(self.dataframe, self.data, reduce_strategy)
+            dataframe = []
+            for group in self_dataframe:
+                dataframe.append(reduce_fn(group, r_args))
+            return dataframe #TODO: finish and check
+        self.dataframe = caching(_reduce)(self.dataframe, reduce_strategy, reduce_args)
+
+    def lazy_reduce(self, reduce_strategy, reduce_args=None):
+        if self.reducing_strategy is not None:
+            raise Exception("Already reduced: cannot reduce twice")
+        self.reducing_strategy = reduce_strategy
+        self.reducing_args = reduce_args
+
+    def reduce_now(self):
+        self.reduce(self.reducing_strategy, self.reducing_args)
+
+    def compute_lazy(self):
+        if self.grouping_attributes is not None:
+            self.group_by(self.grouping_attributes)
+
+            if len(self.filtering_columns) > 0:
+                self.filter_now()
+
+            if self.reducing_strategy is not None:
+                self.reduce_now()
 
     def nunique(self, var):
         return self._nunique[var]
@@ -185,6 +277,8 @@ class Dataset:
     def _update_nunique(self):
         self._nunique = {}
         for col in self.dataframe.columns:
+            if col in self.input_cols or col in self.encoded_input_cols:
+                continue
             self._nunique[col] = self.dataframe[col].nunique()
         if self.labels is not None:
             for col in self.labels.columns:

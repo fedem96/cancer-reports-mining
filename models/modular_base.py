@@ -18,7 +18,7 @@ from metrics.mf1 import MacroF1Score
 
 
 class ModularBase(nn.Module, ABC):
-    def __init__(self, modules_dict, deep_features, model_name):
+    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec):
         super(ModularBase, self).__init__()
         self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
@@ -26,6 +26,10 @@ class ModularBase(nn.Module, ABC):
             "classifiers": nn.ModuleDict({}),
             "regressors": nn.ModuleDict({})
         }))
+
+        self.preprocessor = preprocessor
+        self.tokenizer = tokenizer
+        self.token_codec = token_codec
 
         self.deep_features = deep_features
 
@@ -51,6 +55,9 @@ class ModularBase(nn.Module, ABC):
 
         self.classification_metrics = ["Accuracy", "Accuracy", "M-F1", "CKS", "DBCS"]
         self.regression_metrics = ["MAE"]
+
+    def encode_report(self, report):
+        return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
 
     def set_reduce_method(self, reduce_type, reduce_mode=None):
         if type(reduce_mode) != list and type(reduce_mode) != tuple:
