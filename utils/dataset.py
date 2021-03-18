@@ -39,6 +39,7 @@ class Dataset:
 
     def set_input_cols(self, input_cols):
         self.input_cols = input_cols
+        replace_nulls(self.dataframe, {col: "" for col in input_cols})
 
     def add_encoded_column(self, full_pipe, new_column_name, max_length=None):
         self.full_pipe = full_pipe
@@ -47,7 +48,6 @@ class Dataset:
             if type(dataframe) == list:
                 return [_df_to_data(d, pipeline, cols) for d in dataframe]
 
-            replace_nulls(dataframe, {col: "" for col in cols})
             reports = merge_and_extract(dataframe, cols)
 
             try:
@@ -68,6 +68,7 @@ class Dataset:
             self.dataframe[new_column_name] = [sequence[:max_length] for sequence in self.dataframe[new_column_name]]
         self.encoded_input_cols.append(new_column_name)
 
+    # TODO: rename this function
     def prepare_for_training(self, classifications=[], regressions=[], transformations={}, mappings={}):
         self.classifications, self.regressions = classifications, regressions
         self.transformations, self.mappings = transformations, mappings
@@ -89,19 +90,23 @@ class Dataset:
 
         self._update_nunique()
 
+    def _update_columns_codec(self):
+        for column in self.classifications:
+            if column not in self.mappings:
+                self.mappings[column] = sorted(self.dataframe[column].dropna().unique())
+        self.columns_codec = LabelsCodec().from_mappings(self.mappings)
+
     def get_columns_codec(self):
         if self.columns_codec is None:
-            for column in self.classifications:
-                if column not in self.mappings:
-                    self.mappings[column] = sorted(self.dataframe[column].dropna().unique())
-
-            self.columns_codec = LabelsCodec().from_mappings(self.mappings)
+            self._update_columns_codec()
         return self.columns_codec
 
     def set_columns_codec(self, columns_codec):
         self.columns_codec = columns_codec
 
     def encode_labels(self):
+        if self.columns_codec is None:
+            self._update_columns_codec()
         for column in self.classifications:
             self.dataframe[column] = self.columns_codec[column].encode_batch(self.dataframe[column])
         for column in self.regressions:
@@ -116,10 +121,13 @@ class Dataset:
             return pd.concat([df[self.get_labels_columns()].head(1) for df in self.dataframe])
         return self.dataframe[self.get_labels_columns()]
 
-    def get_data(self, column_name):
+    def get_data(self, column_name, multi_layer=False):
         if type(self.dataframe) == list:
-            return [df[column_name].values[0] for df in self.dataframe]
-        return self.dataframe[column_name].values[0]
+            data = [list(df[column_name].values) for df in self.dataframe]
+            if not multi_layer:
+                data = [d[0] for d in data]
+            return data
+        return self.dataframe[column_name].values[0] #TODO: why [0]?
 
     def group_by(self, attributes):
 
@@ -142,7 +150,6 @@ class Dataset:
         if self.grouping_attributes is not None:
             raise Exception("Already grouped: cannot group twice")
         self.grouping_attributes = attributes
-
 
     def assert_disjuncted(self, other_dataset):
         assert len(set(self.key_to_index.keys()).intersection(other_dataset.key_to_index.keys())) == 0

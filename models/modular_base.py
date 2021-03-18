@@ -18,7 +18,7 @@ from metrics.mf1 import MacroF1Score
 
 
 class ModularBase(nn.Module, ABC):
-    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec):
+    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec, labels_codec):
         super(ModularBase, self).__init__()
         self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
@@ -30,6 +30,7 @@ class ModularBase(nn.Module, ABC):
         self.preprocessor = preprocessor
         self.tokenizer = tokenizer
         self.token_codec = token_codec
+        self.labels_codec = labels_codec
 
         self.deep_features = deep_features
 
@@ -90,6 +91,8 @@ class ModularBase(nn.Module, ABC):
         else:
             raise ValueError("Invalid reduce type: " + reduce_type)
         self.reduce_type = reduce_type
+        self.info = {}
+        self.hyperparameters = {}
 
     def current_device(self):
         return next(self.parameters()).device
@@ -104,15 +107,17 @@ class ModularBase(nn.Module, ABC):
         return {"features": features, **classes, **regressions}
 
     def _forward_reducing_features(self, x):
+        all_features = []
         features_list = []
         for group in x:
             group_all_features = self.extract_features(group)
+            all_features.append(group_all_features)
             group_features = torch.cat([reducer(group_all_features, dim=0) for reducer in self.features_reducers])
             features_list.append(group_features)
         features = torch.stack(features_list)
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
-        return {"features": features, **classes, **regressions}
+        return {"all_features": all_features, "features": features, **classes, **regressions}
 
     def _forward_reducing_logits(self, x):
         classes = {var: torch.zeros((0, self.classifiers[var].out_features), device=self.current_device()) for var, classifier in self.classifiers.items()}
@@ -147,6 +152,8 @@ class ModularBase(nn.Module, ABC):
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
 
     def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, callbacks: List[Callback]=[], **hyperparams):
+        self.info = info
+        self.hyperparameters = hyperparams
         [c.on_fit_start(self) for c in callbacks]
         try:
             self.update_losses(train_labels, val_labels)

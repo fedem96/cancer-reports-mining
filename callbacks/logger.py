@@ -222,7 +222,7 @@ class MetricsLogger(Callback):
         self.log(self.training_metrics, self.validation_metrics)
 
     def on_fit_end(self, model):
-        # self.log_hyper_parameters_and_best_metrics(info, hyperparams) # TODO: uncomment
+        self.log_hyper_parameters_and_best_metrics(model.info, model.hyperparameters)
         self.close()
 
 

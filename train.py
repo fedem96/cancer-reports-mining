@@ -112,7 +112,7 @@ with Chronostep("creating model"):
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
-    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc}
+    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc, "labels_codec": training.get_columns_codec()}
     if args.model_args is not None:
         model_args.update(args.model_args)
     if args.net_seed is not None:
@@ -126,6 +126,7 @@ with Chronostep("creating model"):
 
     # for reg_var in regressions:
     #     model.add_regression(reg_var)
+print("model device:", model.current_device())
 
 print("parameters:", sum([p.numel() for p in model.parameters()]))
 for parameter_name, parameter in model.named_parameters():
@@ -147,7 +148,7 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
              ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True)]
 
 with Chronostep("training"):
-    model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation.get_labels(), info, callbacks, **hyperparameters)
+    model.fit(training.get_data(DATA_COL, args.reduce_type == "features" or args.reduce_type == "logits"), training_labels, validation.get_data(DATA_COL, args.reduce_type != "data"), validation.get_labels(), info, callbacks, **hyperparameters)
 
 # TODO: add transformations
 # TODO: clean code and apis
