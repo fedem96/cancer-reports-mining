@@ -179,8 +179,8 @@ class ModularBase(nn.Module, ABC):
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
-            train_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(True), **self.create_regression_metrics(True)})
-            val_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(False), **self.create_regression_metrics(False)})
+            train_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(True), **self.create_regression_metrics(), **self.create_grad_norm_metrics()})
+            val_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(False), **self.create_regression_metrics()})
             for epoch in range(hyperparams["max_epochs"]):
                 [c.on_epoch_start(self, epoch) for c in callbacks]
                 train_metrics.reset(), val_metrics.reset()
@@ -275,8 +275,8 @@ class ModularBase(nn.Module, ABC):
                 metrics["GradNorm"][var].update(gradient_norm, num_batches)
 
             metrics["Loss"][var].update(losses[var], num_batches)
-            for metric_name in self.regression_metrics.keys():
-                metrics[metric_name][var].update(preds.cpu().numpy(), grth.cpu().numpy())
+            for metric_name in self.regression_metrics:
+                metrics[metric_name][var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
         if "features" in forwarded and self.activation_penalty != 0:
             # total_loss += self.activation_penalty * forwarded["features"].abs().sum()
@@ -313,23 +313,22 @@ class ModularBase(nn.Module, ABC):
 
     def create_classification_metrics(self, training: bool):
         dbcs = self.dumb_baseline_train_accuracy if training else self.dumb_baseline_val_accuracy
-        metrics = {
+        return {
             "Accuracy": {var: Accuracy() for var in self.classifiers},
             "M-F1": {var: MacroF1Score() for var in self.classifiers},
             "CKS": {var: CohenKappaScore() for var in self.classifiers},
             "DBCS": {var: DumbBaselineComparisonScore(dbcs[var]) for var in self.classifiers}
         }
-        if training:
-            metrics["GradNorm"] = {var: Average(max) for var in self.classifiers}
-        return metrics
 
-    def create_regression_metrics(self, training):
-        metrics = {
+    def create_regression_metrics(self):
+        return {
             "MAE": {var: MeanAverageError() for var in self.regressors}
         }
-        if training:
-            metrics["GradNorm"] = {var: Average(max) for var in self.classifiers}
-        return metrics
+
+    def create_grad_norm_metrics(self):
+        return {
+            "GradNorm": {var: Average(max) for var in list(self.classifiers.keys()) + list(self.regressors.keys())}
+        }
 
     def grad_norm(self):
         return sum(p.grad.norm() for p in list(self.parameters()) if p.grad is not None).item()

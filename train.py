@@ -123,8 +123,8 @@ with Chronostep("creating model"):
     for cls_var in classifications:
         model.add_classification(cls_var, training.nunique(cls_var))
 
-    # for reg_var in regressions:
-    #     model.add_regression(reg_var)
+    for reg_var in regressions:
+        model.add_regression(reg_var)
 
 print("created model: " + model_name)
 print("model device:", model.current_device())

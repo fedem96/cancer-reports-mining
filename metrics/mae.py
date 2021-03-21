@@ -1,3 +1,5 @@
+import numpy as np
+
 from metrics.base.metric import Metric
 
 
@@ -11,7 +13,7 @@ class MeanAverageError(Metric):
         self.num_examples = 0
 
     def update(self, preds, grth):
-        self.error += (preds - grth).abs().sum().item()
+        self.error += np.abs(preds - grth).sum().item()
         self.num_examples += len(grth)
 
     def __call__(self, *args, **kwargs):

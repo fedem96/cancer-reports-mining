@@ -40,7 +40,7 @@ class LabelCodec:
         return labels.apply(lambda val: self.decoder[val] if not pd.isnull(val) else val)
 
 
-class AutoLabelCodec(LabelCodec):
+class AutoClassificationLabelCodec(LabelCodec):
 
     def __init__(self):
         super().__init__()
@@ -63,6 +63,63 @@ class AutoLabelCodec(LabelCodec):
     def encode_batch(self, labels):
         if not self.codec_created:
             self.create_codec(labels.dropna().unique())
+        return super().encode_batch(labels)
+
+    def decode(self, label):
+        if not self.codec_created:
+            raise Exception("encoder and decoder not created yet: call 'encode_batch' or 'update_codec' first")
+        return super().decode(label)
+
+    def decode_batch(self, labels):
+        if not self.codec_created:
+            raise Exception("encoder and decoder not created yet: call 'encode_batch' or 'update_codec' first")
+        return super().decode_batch(labels)
+
+
+class AffineLabelCodec(LabelCodec):
+    def __init__(self, a, b):
+        super().__init__()
+        if a == 0:
+            raise ValueError("a can't be 0")
+        self.a = a
+        self.b = b
+
+    def encode(self, label):
+        return self.a * label + self.b
+
+    def encode_batch(self, labels):
+        return self.a * labels + self.b
+
+    def decode(self, label):
+        return (label - self.b) / self.a
+
+    def decode_batch(self, labels):
+        return (labels - self.b) / self.a
+
+
+class AutoRegressionLabelCodec(AffineLabelCodec):
+
+    def __init__(self):
+        super().__init__(1, 0)
+        self.codec_created = False
+
+    def create_codec(self, values):
+        min_val, max_val = min(values), max(values)
+        if max_val == min_val:
+            raise ValueError("min and max are equal: can't autodetect affine transform to normalize data")
+        self.a = 1 / (max_val - min_val)
+        self.b = -min_val * self.a
+        # a,b s.t.: a*min_val+b==0 and a*max_val+b==1
+        self.codec_created = True
+
+    def encode(self, label):
+        if not self.codec_created:
+            raise Exception("encoder and decoder not created yet: call 'encode_batch' or 'create_codec' first")
+        return super().encode(label)
+
+    def encode_batch(self, labels):
+        if not self.codec_created:
+            self.create_codec(labels.dropna())
         return super().encode_batch(labels)
 
     def decode(self, label):
@@ -139,15 +196,24 @@ class LabelCodecFactory:
             raise ValueError("invalid transformation '{}'".format(ty))
 
     @staticmethod
-    def from_transformations(transformations) -> LabelCodecsSequence:
+    def from_classification_transformations(transformations) -> LabelCodecsSequence:
         codecs = []
         has_mapping = False
         for transformation in transformations:
             codecs.append(LabelCodecFactory.from_transformation(transformation))
             has_mapping = has_mapping or transformation['type'] == 'mapping'
         if not has_mapping:
-            codecs.append(LabelCodecFactory.auto_codec())
+            codecs.append(LabelCodecFactory.auto_classification_codec())
         codecs.append(LabelCodecFactory.cast("Int64"))
+        return LabelCodecsSequence(codecs)
+
+    @staticmethod
+    def from_regression_transformations(transformations) -> LabelCodecsSequence:
+        codecs = []
+        for transformation in transformations:
+            print("regressions transformations not implemented yet")
+        codecs.append(LabelCodecFactory.auto_regression_codec())
+        codecs.append(LabelCodecFactory.cast("Float64"))
         return LabelCodecsSequence(codecs)
 
     @staticmethod
@@ -155,8 +221,12 @@ class LabelCodecFactory:
         return LabelCaster(type_str)
 
     @staticmethod
-    def auto_codec():
-        return AutoLabelCodec()
+    def auto_classification_codec():
+        return AutoClassificationLabelCodec()
+
+    @staticmethod
+    def auto_regression_codec():
+        return AutoRegressionLabelCodec()
 
 
 class LabelsCodec:
@@ -196,10 +266,10 @@ class LabelsCodecFactory:
         codecs = {}
         for column in classifications:
             col_transformations = transformations[column] if column in transformations else []
-            codecs[column] = LabelCodecFactory.from_transformations(col_transformations)
+            codecs[column] = LabelCodecFactory.from_classification_transformations(col_transformations)
         for column in regressions:
             col_transformations = transformations[column] if column in transformations else []
-            codecs[column] = LabelCodecFactory.from_transformations(col_transformations)
+            codecs[column] = LabelCodecFactory.from_regression_transformations(col_transformations)
         return LabelsCodec(codecs)
 
 
