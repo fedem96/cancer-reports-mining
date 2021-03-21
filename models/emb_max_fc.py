@@ -5,8 +5,8 @@ from torch import nn
 from models.modular_base import ModularBase
 
 
-class EmbMaxLin:
-    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, net_seed=None, directory=None):
+class EmbMaxLin(ModularBase):
+    def __init__(self, vocab_size, embedding_dim, num_filters, deep_features, net_seed=None, *args, **kwargs):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
 
@@ -27,11 +27,7 @@ class EmbMaxLin:
             "fc": nn.Linear(num_filters[-1], deep_features).to(device)
         }
 
-        self.model = ModularBase(modules, deep_features, "embmaxlin", directory).to(device)
-        self.model.extract_features = self.extract_features
-
-    def __getattr__(self, *args):
-        return self.model.__getattribute__(*args)
+        super(EmbMaxLin, self).__init__(modules, deep_features, "embmaxlin", *args, **kwargs)
 
     def extract_features(self, x):
         # batch_size = len(x)
@@ -43,7 +39,7 @@ class EmbMaxLin:
         reports_lengths = [len(t) for t in x]
         x_tensor = torch.cat(x)
 
-        deep_words = self.model.word_embedding(x_tensor)
+        deep_words = self.word_embedding(x_tensor)
         reports_list = deep_words.split(reports_lengths)
         # deep_reports = []
         #
@@ -56,8 +52,8 @@ class EmbMaxLin:
         # return F.relu(torch.stack(deep_reports))
 
         reports = nn.utils.rnn.pad_sequence(reports_list, batch_first=True).permute([0, 2, 1])
-        deep_reports = self.model.convs(reports).max(dim=2).values
-        return F.relu(self.model.fc(F.relu(deep_reports)))
+        deep_reports = self.convs(reports).max(dim=2).values
+        return F.relu(self.fc(F.relu(deep_reports)))
 
         # records_list = deep_reports.split(records_sizes)
         # records = nn.utils.rnn.pad_sequence(records_list, batch_first=True).permute([0, 2, 1])

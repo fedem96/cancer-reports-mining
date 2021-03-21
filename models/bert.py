@@ -6,9 +6,9 @@ from transformers import BertModel, BertConfig
 from models.modular_base import ModularBase
 
 
-class Bert:
+class Bert(ModularBase):
 
-    def __init__(self, vocab_size, embedding_dim, dropout, num_heads, n_layers, net_seed=None, directory=None):
+    def __init__(self, vocab_size, embedding_dim, dropout, num_heads, n_layers, net_seed=None, *args, **kwargs):
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print("device:", device)
 
@@ -23,13 +23,8 @@ class Bert:
             "dropout": nn.Dropout(dropout)
         }
 
-        self.model = ModularBase(modules, embedding_dim, "bert", directory).to(device)
-        self.model.extract_features = self.extract_features
-
-    def __getattr__(self, *args):
-        if hasattr(self, "model"):
-            return self.model.__getattribute__(*args)
+        super(Bert, self).__init__(modules, embedding_dim, "bert", *args, **kwargs)
 
     def extract_features(self, x):
         input_ids = pad_sequence(x, batch_first=True)
-        return self.model.dropout(self.model.bert(input_ids, attention_mask=input_ids != 0)[1])
+        return self.dropout(self.bert(input_ids, attention_mask=input_ids != 0)[1])

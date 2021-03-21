@@ -8,9 +8,9 @@ import pandas as pd
 import torch
 
 from utils.cache import caching
-from utils.labels_codec import LabelsCodec
+from utils.labels_codec import LabelsCodecFactory
 from utils.serialization import load
-from utils.utilities import replace_nulls, merge_and_extract
+from utils.utilities import replace_nulls, merge_and_extract, to_gpu_if_available
 
 
 class Dataset:
@@ -25,7 +25,6 @@ class Dataset:
         self.classifications = []
         self.regressions = []
         self.transformations = None
-        self.mappings = None
         self.columns_codec = None
         self.labels = None
         self.index_to_key = None
@@ -69,32 +68,14 @@ class Dataset:
         self.encoded_input_cols.append(new_column_name)
 
     # TODO: rename this function
-    def prepare_for_training(self, classifications=[], regressions=[], transformations={}, mappings={}):
+    def prepare_for_training(self, classifications=[], regressions=[], transformations={}):
         self.classifications, self.regressions = classifications, regressions
-        self.transformations, self.mappings = transformations, mappings
-        for column in classifications:
-            if column in transformations:
-                for transf in transformations[column]:
-                    ty = transf["type"]
-                    if ty == "regex_sub":
-                        for s in transf["subs"]:
-                            regex = re.compile(s[0], re.I)
-                            self.dataframe[column] = self.dataframe[column].apply(lambda v: s[1] if regex.match(str(v)) else v)
-                            # self.dataframe.loc[self.dataframe.index[self.dataframe[column].apply(lambda v: None != regex.match(str(v)))], column] = s[1]
-                    elif ty == "filter":
-                        self.dataframe.loc[self.dataframe.index[
-                                        self.dataframe[column].apply(lambda v: v not in transf["valid_set"])], column] = np.NaN
-                    else:
-                        raise ValueError("invalid transformation '{}' for classification problem".format(ty))
-            # dataset[column] = columns_codec[column].encode_batch(dataset[column])
-
+        self.transformations = transformations
         self._update_nunique()
 
     def _update_columns_codec(self):
-        for column in self.classifications:
-            if column not in self.mappings:
-                self.mappings[column] = sorted(self.dataframe[column].dropna().unique())
-        self.columns_codec = LabelsCodec().from_mappings(self.mappings)
+        # unique_values = {col: self.dataframe[col].dropna().unique() for col in self.classifications + self.regressions}
+        self.columns_codec = LabelsCodecFactory.from_transformations(self.classifications, self.regressions, self.transformations)
 
     def get_columns_codec(self):
         if self.columns_codec is None:
@@ -144,7 +125,7 @@ class Dataset:
                 dataframe.append(group)
             return index_to_key, key_to_index, dataframe
 
-        self.index_to_key, self.key_to_index, self.dataframe = caching(_group_by)(self.dataframe, attributes)
+        self.index_to_key, self.key_to_index, self.dataframe = _group_by(self.dataframe, attributes)
 
     def lazy_group_by(self, attributes):
         if self.grouping_attributes is not None:
@@ -195,6 +176,7 @@ class Dataset:
             elif type(filter_strat) == str:
                 if filter_strat == "classifier":
                     model = load(filter_args["path"])
+                    model = to_gpu_if_available(model)
                     model.eval()
                     self.add_encoded_column(model.encode_report, filter_args["encoded_data_column"], filter_args["max_length"])
                 def _same_year(df, *args):
@@ -290,3 +272,8 @@ class Dataset:
         if self.labels is not None:
             for col in self.labels.columns:
                 self._nunique[col] = self.labels[col].nunique()
+
+    def limit(self, n):
+        if self.grouping_attributes is None:
+            raise NotImplementedError("limit not implemented without group by")
+        self.dataframe = self.dataframe[:n]

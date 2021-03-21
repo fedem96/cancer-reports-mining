@@ -29,14 +29,13 @@ while True:
             break
         encoded_record.append(torch.tensor(model.encode_report(report), device=device))
 
-    # out = model([encoded_record])
-    out = model._forward_reducing_features([encoded_record]) #TODO: change with line above
+    out = model([encoded_record])
     # print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
         print(cls_var)
         prediction_idx = out[cls_var].argmax().item()
         prediction = model.labels_codec.codecs[cls_var].decode(prediction_idx)
-        print("prediction array: {}".format(out[cls_var].numpy()))
+        print("prediction array: {}".format(out[cls_var].cpu().numpy()))
         print("prediction index: {}".format(prediction_idx))
         print("prediction: {}".format(prediction))
         if 'all_features' in out:
@@ -51,4 +50,4 @@ while True:
         else:
             print("this model does not support insights on importance of reports")
 
-        print()
+        print("\n")

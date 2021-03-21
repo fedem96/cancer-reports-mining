@@ -71,17 +71,20 @@ while True:
     print("\nrandom index: {}".format(index))
     encoded_record = [torch.tensor(t, device=device) for t in data[index]]
     record_labels = labels.loc[index]
-    # out = model([encoded_record])
-    out = model._forward_reducing_features([encoded_record]) #TODO: change with line above
+    out = model([encoded_record])
     record = list(merge_and_extract(dataset.dataframe[index], input_cols))
     print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
         print(cls_var)
-        prediction_idx, grth_idx = out[cls_var].argmax().item(), record_labels[cls_var].item()
-        prediction, grth = model.labels_codec.codecs[cls_var].decode(prediction_idx), model.labels_codec.codecs[cls_var].decode(grth_idx)
-        print("prediction array: {}".format(out[cls_var].numpy()))
-        print("prediction index: {}, groundtruth index: {}".format(prediction_idx, grth_idx))
-        print("prediction: {}, groundtruth: {}".format(prediction, grth))
+        prediction_idx = out[cls_var].argmax().item()
+        prediction = model.labels_codec.codecs[cls_var].decode(prediction_idx)
+        print("prediction:  {}, prediction index:  {}, prediction logits: {}".format(prediction, prediction_idx, out[cls_var].cpu().numpy()))
+        if not pd.isnull(record_labels[cls_var]):
+            grth_idx = record_labels[cls_var].item()
+            grth = model.labels_codec.codecs[cls_var].decode(grth_idx)
+            print("groundtruth: {}, groundtruth index: {}".format(grth, grth_idx))
+        else:
+            print("no groundtruth available")
         if 'all_features' in out:
             record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
             for idx_fr, fr in enumerate(model.features_reducers):
@@ -95,3 +98,4 @@ while True:
             print("this model does not support insights on importance of reports")
 
         print()
+    print()

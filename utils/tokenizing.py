@@ -22,26 +22,26 @@ class Tokenizer:
 
 class TokenCodec:
 
-    def __init__(self, coder={}, decoder={}):
-        self.coder = coder
+    def __init__(self, encoder={}, decoder={}):
+        self.encoder = encoder
         self.decoder = decoder
-        assert len(self.coder) == len(self.decoder)
+        assert len(self.encoder) == len(self.decoder)
 
     def load(self, filename):
         with open(filename, "rt") as file:
             js = json.load(file)
-        self.coder = js["coder"]
+        self.encoder = js["encoder"]
         self.decoder = js["decoder"]
-        assert len(self.coder) == len(self.decoder)
+        assert len(self.encoder) == len(self.decoder)
         return self
 
     def save(self, filename):
         with open(filename, "wt") as file:
-            json.dump({"coder": self.coder, "decoder": self.decoder}, file)
+            json.dump({"encoder": self.encoder, "decoder": self.decoder}, file)
         return self
 
     def encode_token(self, token):
-        return self.coder.get(token, 0)
+        return self.encoder.get(token, 0)
 
     def encode(self, tokens):
         return np.array([self.encode_token(token) for token in tokens])
@@ -59,7 +59,7 @@ class TokenCodec:
         return [self.decode(tokens_idxs) for tokens_idxs in tokens_idxs_group]
 
     def num_tokens(self):
-        return len(self.coder)
+        return len(self.encoder)
 
 
 class TokenCodecCreator:
@@ -69,14 +69,14 @@ class TokenCodecCreator:
         self.tokenizer = Tokenizer(tokenizer)
 
     def create_codec(self, texts):
-        coder = {}
+        encoder = {}
         decoder = {}
         count = 0
         tokens_batch = self.tokenizer.tokenize_batch(self.preprocessor.preprocess_batch(texts))
         for tokens in tokens_batch:
             for token in tokens:
-                if token not in coder:
+                if token not in encoder:
                     count += 1
-                    coder[token] = count
+                    encoder[token] = count
                     decoder[count] = token
-        return TokenCodec(coder, decoder)
+        return TokenCodec(encoder, decoder)

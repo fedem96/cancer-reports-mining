@@ -179,8 +179,8 @@ class ModularBase(nn.Module, ABC):
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
-            train_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(True), **self.create_regression_metrics()})
-            val_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(False), **self.create_regression_metrics()})
+            train_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(True), **self.create_regression_metrics(True)})
+            val_metrics = Metrics({**self.create_losses(), **self.create_classification_metrics(False), **self.create_regression_metrics(False)})
             for epoch in range(hyperparams["max_epochs"]):
                 [c.on_epoch_start(self, epoch) for c in callbacks]
                 train_metrics.reset(), val_metrics.reset()
@@ -194,7 +194,7 @@ class ModularBase(nn.Module, ABC):
                     [c.on_train_batch_start(self) for c in callbacks]
                     batch = train_data[b * batch_size: (b + 1) * batch_size]
                     batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                    self.train_step(batch, batch_labels, metrics=train_metrics.metrics)
+                    self.train_step(batch, batch_labels, num_batches, metrics=train_metrics.metrics)
                     [c.on_train_batch_end(self, train_metrics.metrics) for c in callbacks]
                 [c.on_train_epoch_end(self, epoch, train_metrics.metrics) for c in callbacks]
 
@@ -204,7 +204,7 @@ class ModularBase(nn.Module, ABC):
                         [c.on_validation_batch_start(self) for c in callbacks]
                         batch = val_data[b * batch_size: (b + 1) * batch_size]
                         batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-                        self.train_step(batch, batch_labels, metrics=val_metrics.metrics, training=False)
+                        self.train_step(batch, batch_labels, num_val_batches, metrics=val_metrics.metrics, training=False)
                         [c.on_validation_batch_end(self, val_metrics.metrics) for c in callbacks]
                     [c.on_validation_epoch_end(self, epoch, val_metrics.metrics) for c in callbacks]
 
@@ -212,7 +212,7 @@ class ModularBase(nn.Module, ABC):
         finally:
             [c.on_fit_end(self) for c in callbacks]
 
-    def train_step(self, data, labels, metrics={}, training=True):
+    def train_step(self, data, labels, num_batches, metrics={}, training=True):
 
         if training:
             self.optimizer.zero_grad()
@@ -230,7 +230,10 @@ class ModularBase(nn.Module, ABC):
         losses = {}
         device = self.current_device()
 
-        total_loss = torch.tensor([0.0], device=self.current_device())
+        # total_loss = torch.tensor([0.0], device=self.current_device())
+        # total_loss = 0
+        total_gradient_norm = 0
+        gradient_norms = {}
 
         for var in self.classifiers:
             mask = ~labels[var].isnull()
@@ -238,14 +241,20 @@ class ModularBase(nn.Module, ABC):
                 continue
             preds = forwarded[var][mask]
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
-            loss = self.losses[var](preds, grth)
+            loss = self.losses[var](preds, grth) / len(grth)
             losses[var] = loss.detach().item()
-            total_loss += loss
+            # total_loss += loss
+            if training:
+                loss.backward(retain_graph=True)
+                gradient_norm = self.grad_norm() - total_gradient_norm
+                total_gradient_norm += gradient_norm
+                gradient_norms[var] = gradient_norm
+                metrics["GradNorm"][var].update(gradient_norm, num_batches)
             
             grth = grth.cpu().numpy()
             preds_classes = torch.argmax(preds.detach(), dim=1).cpu().numpy()
 
-            metrics["Loss"][var].update(losses[var], len(grth))
+            metrics["Loss"][var].update(losses[var], num_batches)
             for metric_name in self.classification_metrics:
                 metrics[metric_name][var].update(preds_classes, grth)
 
@@ -255,18 +264,30 @@ class ModularBase(nn.Module, ABC):
                 continue
             preds = forwarded[var][mask].squeeze(1)
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
-            loss = self.losses[var](preds, grth)
-            losses[var] = loss.item()
-            total_loss += loss
+            loss = self.losses[var](preds, grth) / len(grth)
+            losses[var] = loss.detach().item()
+            # total_loss += loss
+            if training:
+                loss.backward(retain_graph=True)
+                gradient_norm = self.grad_norm() - total_gradient_norm
+                total_gradient_norm += gradient_norm
+                gradient_norms[var] = gradient_norm
+                metrics["GradNorm"][var].update(gradient_norm, num_batches)
 
-            metrics["Loss"][var].update(losses[var], len(grth))
+            metrics["Loss"][var].update(losses[var], num_batches)
             for metric_name in self.regression_metrics.keys():
                 metrics[metric_name][var].update(preds.cpu().numpy(), grth.cpu().numpy())
 
         if "features" in forwarded and self.activation_penalty != 0:
-            total_loss += self.activation_penalty * forwarded["features"].abs().sum()
+            # total_loss += self.activation_penalty * forwarded["features"].abs().sum()
+            regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
+            if training:
+                regularization_loss.backward()
+                gradient_norm = self.grad_norm() - total_gradient_norm
+                total_gradient_norm += gradient_norm
+                gradient_norms["features_regularization_l1"] = gradient_norm
         if training:
-            total_loss.backward()  # TODO: address loss scale
+            # total_loss.backward()  # TODO: address loss scale
             self.optimizer.step()
         return None
 
@@ -292,28 +313,36 @@ class ModularBase(nn.Module, ABC):
 
     def create_classification_metrics(self, training: bool):
         dbcs = self.dumb_baseline_train_accuracy if training else self.dumb_baseline_val_accuracy
-        return {
+        metrics = {
             "Accuracy": {var: Accuracy() for var in self.classifiers},
             "M-F1": {var: MacroF1Score() for var in self.classifiers},
             "CKS": {var: CohenKappaScore() for var in self.classifiers},
             "DBCS": {var: DumbBaselineComparisonScore(dbcs[var]) for var in self.classifiers}
         }
+        if training:
+            metrics["GradNorm"] = {var: Average(max) for var in self.classifiers}
+        return metrics
 
-    def create_regression_metrics(self):
-        return {
+    def create_regression_metrics(self, training):
+        metrics = {
             "MAE": {var: MeanAverageError() for var in self.regressors}
         }
+        if training:
+            metrics["GradNorm"] = {var: Average(max) for var in self.classifiers}
+        return metrics
 
-    @DeprecationWarning
-    def infer(self, x):
-        with torch.no_grad():
-            if type(x) == list or type(x) == tuple:
-                x = [torch.tensor(example, device=self.current_device()) for example in x]
-                predictions = self(x)
-            else:
-                x = torch.tensor(x, device=self.current_device())
-                predictions = self([x])
-        return predictions
+    def grad_norm(self):
+        return sum(p.grad.norm() for p in list(self.parameters()) if p.grad is not None).item()
+
+    # def infer(self, x):
+    #     with torch.no_grad():
+    #         if type(x) == list or type(x) == tuple:
+    #             x = [torch.tensor(example, device=self.current_device()) for example in x]
+    #             predictions = self(x)
+    #         else:
+    #             x = torch.tensor(x, device=self.current_device())
+    #             predictions = self([x])
+    #     return predictions
 
 
 if __name__ == "__main__":

@@ -28,9 +28,8 @@ parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
-parser.add_argument("-im", "--input-mappings", help="how to map the input", default={}, type=json.loads)
-parser.add_argument("-it", "--input-transformations", help="how to transform the input", default={}, type=json.loads)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
+parser.add_argument("-lt", "--label-transformations", help="how to transform the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
@@ -56,7 +55,7 @@ DATA_COL = "encoded_data"
 with Chronostep("reading input"):
 
     classifications, regressions = args.train_classifications, args.train_regressions
-    transformations, mappings = args.input_transformations, args.input_mappings
+    transformations = args.label_transformations
 
 with Chronostep("encoding reports"):
     input_cols = ["diagnosi", "macroscopia", "notizie"]
@@ -72,7 +71,7 @@ with Chronostep("encoding reports"):
         dataset = sets[set_name]
         dataset.set_input_cols(input_cols)
         dataset.add_encoded_column(full_pipe, DATA_COL, args.max_length)
-        dataset.prepare_for_training(classifications, regressions, transformations, mappings)
+        dataset.prepare_for_training(classifications, regressions, transformations)
         if set_name == "train":
             columns_codec = dataset.get_columns_codec()
         else:
@@ -126,6 +125,8 @@ with Chronostep("creating model"):
 
     # for reg_var in regressions:
     #     model.add_regression(reg_var)
+
+print("created model: " + model_name)
 print("model device:", model.current_device())
 
 print("parameters:", sum([p.numel() for p in model.parameters()]))
