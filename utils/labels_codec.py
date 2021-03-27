@@ -281,7 +281,7 @@ class RegexLookup:
         for pattern, value in self.lookup_pairs:
             if re.search(pattern, key):
                 return value
-        raise KeyError("key '{}' does not match any regex".format(key))
+        return key
 
 
 class Filter:

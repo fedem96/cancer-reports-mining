@@ -30,32 +30,6 @@ class EmbMaxLin(ModularBase):
         super(EmbMaxLin, self).__init__(modules, deep_features, "embmaxlin", *args, **kwargs)
 
     def extract_features(self, x):
-        # batch_size = len(x)
-
-        # records_sizes = [len(record) for record in x]
-        # reports_lengths = [len(report) for record in x for report in record]
-        # x_tensor = torch.cat([torch.cat(record) for record in x])
-
-        reports_lengths = [len(t) for t in x]
-        x_tensor = torch.cat(x)
-
-        deep_words = self.word_embedding(x_tensor)
-        reports_list = deep_words.split(reports_lengths)
-        # deep_reports = []
-        #
-        # for words_embs in reports_list:
-        #     # for conv in self.convs:
-        #     #     words_embs = F.relu(conv(words_embs.transpose(0, 1).unsqueeze(0)).squeeze(0))
-        #     sequence_emb = torch.max(self.convs(words_embs.transpose(0, 1).unsqueeze(0)).squeeze(0), 1)
-        #     deep_reports.append(sequence_emb.values)
-        #
-        # return F.relu(torch.stack(deep_reports))
-
-        reports = nn.utils.rnn.pad_sequence(reports_list, batch_first=True).permute([0, 2, 1])
-        deep_reports = self.convs(reports).max(dim=2).values
+        deep_words = self.word_embedding(x)
+        deep_reports = self.convs(deep_words.permute(0,2,1)).max(dim=2).values
         return F.relu(self.fc(F.relu(deep_reports)))
-
-        # records_list = deep_reports.split(records_sizes)
-        # records = nn.utils.rnn.pad_sequence(records_list, batch_first=True).permute([0, 2, 1])
-        # deep_records = records.max(dim=2).values
-        # return deep_records

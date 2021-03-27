@@ -31,7 +31,8 @@ class TokenCodec:
         with open(filename, "rt") as file:
             js = json.load(file)
         self.encoder = js["encoder"]
-        self.decoder = js["decoder"]
+        decoder = js["decoder"]
+        self.decoder = {int(k): v for k, v in decoder.items()}
         assert len(self.encoder) == len(self.decoder)
         return self
 
@@ -50,7 +51,7 @@ class TokenCodec:
         return [self.encode(tokens) for tokens in tokens_group]
 
     def decode_token(self, token_idx):
-        return self.decoder[token_idx]
+        return self.decoder.get(token_idx, "")
 
     def decode(self, tokens_idxs):
         return np.array([self.decode_token(token_idx) for token_idx in tokens_idxs])

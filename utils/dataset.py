@@ -35,12 +35,26 @@ class Dataset:
         self.filtering_columns = []
         self.reducing_strategy = None
         self.reducing_args = None
+        self.encoded_data_column = None
 
     def set_input_cols(self, input_cols):
         self.input_cols = input_cols
         replace_nulls(self.dataframe, {col: "" for col in input_cols})
 
+    def set_encoded_data_column(self, column_name):
+        if type(self.dataframe) == list:
+            raise Exception("cannot execute operation: dataframe is already grouped")
+        if column_name not in self.dataframe.columns:
+            raise Exception("column '{}' does not exists".format(column_name))
+        if self.encoded_data_column is not None:
+            raise Exception("encoded data column already exists")
+        self.encoded_data_column = column_name
+
     def add_encoded_column(self, full_pipe, new_column_name, max_length=None):
+
+        if len(self.input_cols) == 0:
+            raise Exception("input columns not set")
+
         self.full_pipe = full_pipe
 
         def _df_to_data(dataframe, pipeline, cols):
@@ -97,9 +111,13 @@ class Dataset:
     def get_labels_columns(self):
         return self.classifications + self.regressions
 
+    # TODO: very slow, speedup
     def get_labels(self):
         if type(self.dataframe) == list:
-            return pd.concat([df[self.get_labels_columns()].head(1) for df in self.dataframe])
+            cols = self.get_labels_columns()
+            tmp = [df.loc[:,cols] for df in self.dataframe]
+            l = [t.head(1) for t in tmp]
+            return pd.concat(l)
         return self.dataframe[self.get_labels_columns()]
 
     def get_data(self, column_name, multi_layer=False):
@@ -108,7 +126,7 @@ class Dataset:
             if not multi_layer:
                 data = [d[0] for d in data]
             return data
-        return self.dataframe[column_name].values[0] #TODO: why [0]?
+        return list(self.dataframe[column_name].values)
 
     def group_by(self, attributes):
 
@@ -182,6 +200,9 @@ class Dataset:
                 def _same_year(df, *args):
                     return df['anno_referto'].values == df['anno_diagnosi'].values
                 def _with_classifier(df, fa):
+                    tot_acceptable = 0
+                    tot_unacceptable = 0
+                    tot_forced_accept = 0
                     encoded_data_column = fa["encoded_data_column"]
                     torch_reports = [torch.tensor(report, device=model.current_device()) for report in df[encoded_data_column]]
                     batch_size = 64
@@ -189,6 +210,7 @@ class Dataset:
                     for i in range(0, len(torch_reports), batch_size):
                         batch = torch_reports[i: min(i+batch_size, len(torch_reports))]
                         filter_result.append( model(batch)['sede_icdo3'].argmax(dim=1).cpu().numpy().astype(bool) )
+                    print("tot_acceptable: {}, tot_unacceptable: {}".format((np.concatenate(filter_result)).sum(), (~np.concatenate(filter_result)).sum()))
                     return np.concatenate(filter_result)
                 filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
                 filter_fn = filter_dict[filter_strat]
@@ -204,22 +226,36 @@ class Dataset:
     def filter_now(self):
         def _filter(self_dataframe, filtering_columns):
             dataframe = []
+            tot_acceptable = 0
+            tot_unacceptable = 0
+            tot_forced_accept = 0
+            tot_groups = 0
+            tot_forced_groups = 0
             for group in self_dataframe:
+                tot_groups += 1
                 mask = group[filtering_columns].prod(axis=1).astype(bool)
+                tot_acceptable += sum(mask)
+                tot_unacceptable += sum(~mask)
                 if any(mask):
                     dataframe.append(group[mask])
                 else:
                     dataframe.append(group)
+                    tot_forced_groups += 1
+                    tot_forced_accept += sum(~mask)
+
+            print("tot_acceptable: {}, tot_unacceptable: {}, forced: {}".format(tot_acceptable, tot_unacceptable, tot_forced_accept))
+            print("tot_groups: {}, tot_forced_groups: {}".format(tot_groups, tot_forced_groups))
             return dataframe
 
         self.dataframe = _filter(self.dataframe, self.filtering_columns)
 
     def reduce(self, reduce_strategy, reduce_args=None):
+        _self = self
         def _reduce(self_dataframe, reduce_strat, r_args):
             if callable(reduce_strat):
                 reduce_fn = reduce_strat
             elif type(reduce_strat) == str:
-                def _most_recent(group_df, ra):
+                def _most_recent(group_df, ra): # DEPRECATED
                     mr_year = max(group_df['anno_referto'].values)
                     mask = group_df['anno_referto'].values == mr_year
                     if not any(mask):
@@ -231,7 +267,19 @@ class Dataset:
                         group_df = group_df[mask]
                     assert len(group_df) == 1
                     return group_df
-                reduce_dict = {"most_recent": _most_recent}
+                def _concatenate(group_df, ra):
+                    if len(_self.input_cols) == 0:
+                        raise Exception("input columns not set")
+                    if _self.encoded_data_column is None:
+                        raise Exception("encoded data column not set")
+                    if len(group_df) == 1:
+                        return group_df
+                    values = np.concatenate(group_df[_self.encoded_data_column].values)
+                    if ra is not None and "max_length" in ra:
+                        values = values[:ra["max_length"]]
+                    group_df.at[group_df.index[0], _self.encoded_data_column] = values
+                    return group_df.head(1)
+                reduce_dict = {"most_recent": _most_recent, "concatenate": _concatenate}
                 reduce_fn = reduce_dict[reduce_strat]
             else:
                 raise ValueError("Invalid reduce method")

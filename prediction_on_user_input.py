@@ -35,7 +35,7 @@ while True:
         print(cls_var)
         prediction_idx = out[cls_var].argmax().item()
         prediction = model.labels_codec.codecs[cls_var].decode(prediction_idx)
-        print("prediction array: {}".format(out[cls_var].cpu().numpy()))
+        print("prediction logits: {}".format(out[cls_var].cpu().numpy()))
         print("prediction index: {}".format(prediction_idx))
         print("prediction: {}".format(prediction))
         if 'all_features' in out:
@@ -49,5 +49,23 @@ while True:
                     print("most important report (0-based index): {}".format(np.argmax(num_equals)))
         else:
             print("this model does not support insights on importance of reports")
+        print()
 
-        print("\n")
+    for reg_var in regressions:
+        print(reg_var)
+        encoded_prediction = out[reg_var].item()
+        prediction = model.labels_codec.codecs[reg_var].decode(encoded_prediction)
+        print("prediction:  {}, encoded prediction:  {}".format(prediction, encoded_prediction))
+        if 'all_features' in out:
+            record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
+            for idx_fr, fr in enumerate(model.features_reducers):
+                num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(encoded_record))]
+                if sum(num_equals) == 0:
+                    print("this reduce method does not support insights on importance of reports")
+                else:
+                    print("importance of reports: {}".format(num_equals))
+                    print("most important report: {}".format(np.argmax(num_equals)))
+        else:
+            print("this model does not support insights on importance of reports")
+        print()
+    print()

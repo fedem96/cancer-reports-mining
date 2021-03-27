@@ -16,6 +16,8 @@ def caching(function):
         def _obj_to_hex(o):
             if callable(o):
                 return "&".join([o.__module__, o.__qualname__, str(signature(o)), str(o.__defaults__), str(o.__kwdefaults__)])
+            elif type(o) == dict:
+                return str(o)
             elif hasattr(o, "__iter__"):
                 l = [str(type(o)), str(len(o)), str(dir(o))]
                 if hasattr(o, "__len__") and len(o) > 0:

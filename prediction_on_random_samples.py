@@ -51,7 +51,7 @@ DATA_COL = "encoded_data"
 dataset = Dataset(os.path.join(args.dataset_dir, args.set + "_set.csv"))
 dataset.set_input_cols(input_cols)
 dataset.add_encoded_column(model.encode_report, DATA_COL, args.max_length)
-dataset.prepare_for_training(classifications, regressions, {}, {}) # TODO: transformations and mappings
+dataset.prepare_for_training(classifications, regressions, {}) # TODO: transformations and mappings
 dataset.set_columns_codec(model.labels_codec)
 dataset.encode_labels()
 
@@ -96,6 +96,29 @@ while True:
                     print("most important report: {}".format(np.argmax(num_equals)))
         else:
             print("this model does not support insights on importance of reports")
+        print()
 
+    for reg_var in regressions:
+        print(reg_var)
+        encoded_prediction = out[reg_var].item()
+        prediction = model.labels_codec.codecs[reg_var].decode(encoded_prediction)
+        print("prediction:  {}, encoded prediction:  {}".format(prediction, encoded_prediction))
+        if not pd.isnull(record_labels[reg_var]):
+            encoded_grth = record_labels[reg_var].item()
+            grth = model.labels_codec.codecs[reg_var].decode(encoded_grth)
+            print("groundtruth: {}, encoded groundtruth: {}".format(grth, encoded_grth))
+        else:
+            print("no groundtruth available")
+        if 'all_features' in out:
+            record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
+            for idx_fr, fr in enumerate(model.features_reducers):
+                num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(record))]
+                if sum(num_equals) == 0:
+                    print("this reduce method does not support insights on importance of reports")
+                else:
+                    print("importance of reports: {}".format(num_equals))
+                    print("most important report: {}".format(np.argmax(num_equals)))
+        else:
+            print("this model does not support insights on importance of reports")
         print()
     print()

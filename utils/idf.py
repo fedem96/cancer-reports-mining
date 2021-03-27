@@ -36,3 +36,6 @@ class InverseFrequenciesCounter:
         self.idf = {token: math.log(num_docs / counts[token]) for token in counts}
 
         return self
+
+    def get_idf(self, token):
+        return self.idf.get(token, 0)

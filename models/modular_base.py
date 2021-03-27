@@ -5,7 +5,7 @@ from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, SparseAdam, Adagrad
 
 from callbacks.base_callback import Callback
 from metrics.accuracy import Accuracy
@@ -17,8 +17,20 @@ from metrics.metrics import Metrics
 from metrics.mf1 import MacroF1Score
 
 
+def padding_tensor(sequences, max_len):
+    num = len(sequences)
+    out_dims = (num, max_len)
+    out_tensor = sequences[0].data.new(*out_dims).fill_(0)
+    mask = sequences[0].data.new(*out_dims).fill_(0)
+    for i, tensor in enumerate(sequences):
+        length = tensor.size(0)
+        out_tensor[i, :length] = tensor
+        mask[i, :length] = 1
+    return out_tensor, mask
+
+
 class ModularBase(nn.Module, ABC):
-    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec, labels_codec):
+    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec, labels_codec, *args, **kwargs):
         super(ModularBase, self).__init__()
         self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
@@ -107,13 +119,11 @@ class ModularBase(nn.Module, ABC):
         return {"features": features, **classes, **regressions}
 
     def _forward_reducing_features(self, x):
-        all_features = []
-        features_list = []
-        for group in x:
-            group_all_features = self.extract_features(group)
-            all_features.append(group_all_features)
-            group_features = torch.cat([reducer(group_all_features, dim=0) for reducer in self.features_reducers])
-            features_list.append(group_features)
+        # all_features = [self.extract_features(group) for group in x]
+        all_features = self.extract_groups_features(x)
+
+        features_list = [torch.cat([reducer(group_all_features, dim=0) for reducer in self.features_reducers]) for group_all_features in all_features]
+
         features = torch.stack(features_list)
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
@@ -132,6 +142,9 @@ class ModularBase(nn.Module, ABC):
     @abstractmethod
     def extract_features(self, x):
         pass
+
+    def extract_groups_features(self, x):
+        return [self.extract_features(group) for group in x]
 
     def update_losses(self, train_labels, val_labels):
         self.losses = {}
@@ -165,16 +178,18 @@ class ModularBase(nn.Module, ABC):
             self.activation_penalty = hyperparams["activation_penalty"]
 
             if self.reduce_type is None or self.reduce_type == "data":
-                train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
+                train_data = padding_tensor([torch.tensor(report, device=self.current_device()) for report in train_data],400)[0]
                 if val_data is not None:
-                    val_data = [torch.tensor(report, device=self.current_device()) for report in val_data]
+                    val_data = padding_tensor([torch.tensor(report, device=self.current_device()) for report in val_data],400)[0]
             else:
                 if self.reduce_type == "eval":
                     train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
                 else:
-                    train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
+                    # train_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in train_data]
+                    train_data = [padding_tensor([torch.tensor(report, device=self.current_device()) for report in record],100)[0] for record in train_data]
                 if val_data is not None:
-                    val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
+                    # val_data = [[torch.tensor(report, device=self.current_device()) for report in record] for record in val_data]
+                    val_data = [padding_tensor([torch.tensor(report, device=self.current_device()) for report in record],100)[0] for record in val_data]
 
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
@@ -186,7 +201,10 @@ class ModularBase(nn.Module, ABC):
                 train_metrics.reset(), val_metrics.reset()
                 perm = np.random.permutation(len(train_data))
                 # perm = sorted(range(len(train_data)), key=lambda n: train_data[n].shape[0])
-                train_data = [train_data[d] for d in perm]
+                if type(train_data) == list:
+                    train_data = [train_data[d] for d in perm]
+                else:
+                    train_data = train_data[perm]
                 train_labels = train_labels.iloc[perm].reset_index(drop=True)
 
                 [c.on_train_epoch_start(self, epoch) for c in callbacks]
@@ -230,8 +248,6 @@ class ModularBase(nn.Module, ABC):
         losses = {}
         device = self.current_device()
 
-        # total_loss = torch.tensor([0.0], device=self.current_device())
-        # total_loss = 0
         total_gradient_norm = 0
         gradient_norms = {}
 
@@ -239,11 +255,11 @@ class ModularBase(nn.Module, ABC):
             mask = ~labels[var].isnull()
             if mask.sum() == 0:
                 continue
-            preds = forwarded[var][mask]
+            preds = forwarded[var][mask]  # TODO: mask indexing is slow
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
             loss = self.losses[var](preds, grth) / len(grth)
             losses[var] = loss.detach().item()
-            # total_loss += loss
+
             if training:
                 loss.backward(retain_graph=True)
                 gradient_norm = self.grad_norm() - total_gradient_norm
@@ -266,7 +282,7 @@ class ModularBase(nn.Module, ABC):
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
             loss = self.losses[var](preds, grth) / len(grth)
             losses[var] = loss.detach().item()
-            # total_loss += loss
+
             if training:
                 loss.backward(retain_graph=True)
                 gradient_norm = self.grad_norm() - total_gradient_norm
@@ -279,7 +295,6 @@ class ModularBase(nn.Module, ABC):
                 metrics[metric_name][var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
         if "features" in forwarded and self.activation_penalty != 0:
-            # total_loss += self.activation_penalty * forwarded["features"].abs().sum()
             regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
             if training:
                 regularization_loss.backward()
@@ -287,7 +302,6 @@ class ModularBase(nn.Module, ABC):
                 total_gradient_norm += gradient_norm
                 gradient_norms["features_regularization_l1"] = gradient_norm
         if training:
-            # total_loss.backward()  # TODO: address loss scale
             self.optimizer.step()
         return None
 
@@ -295,7 +309,10 @@ class ModularBase(nn.Module, ABC):
         self.classifiers[task_name] = nn.Linear(self.deep_features, num_classes).to(self.current_device())
 
     def add_regression(self, task_name):
-        self.regressors[task_name] = nn.Linear(self.deep_features, 1).to(self.current_device())
+        self.regressors[task_name] = nn.Sequential(
+            nn.Linear(self.deep_features, 1).to(self.current_device()),
+            nn.Sigmoid()
+        )
 
     def __str__(self):
         str_dict = {}
@@ -331,7 +348,7 @@ class ModularBase(nn.Module, ABC):
         }
 
     def grad_norm(self):
-        return sum(p.grad.norm() for p in list(self.parameters()) if p.grad is not None).item()
+        return sum(p.grad.detach().norm() for p in list(self.parameters()) if p.grad is not None).item()
 
     # def infer(self, x):
     #     with torch.no_grad():

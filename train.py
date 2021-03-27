@@ -2,11 +2,13 @@ import argparse
 import json
 from importlib import import_module
 
+from callbacks.early_stopping import EarlyStoppingSW
 from callbacks.logger import MetricsLogger
 from callbacks.model_checkpoint import ModelCheckpoint
 from utils.chrono import Chronostep
 from utils.constants import *
 from utils.dataset import Dataset
+from utils.idf import InverseFrequenciesCounter
 from utils.preprocessing import *
 from utils.tokenizing import TokenCodec, Tokenizer
 from utils.utilities import *
@@ -28,6 +30,7 @@ parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
+parser.add_argument("-ic", "--input-cols", help="Inverse Document Frequencies filename", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-lt", "--label-transformations", help="how to transform the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
@@ -36,6 +39,7 @@ parser.add_argument("-ns", "--net-seed", help="seed for model random weights gen
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
+parser.add_argument("-ra", "--reduce-args", help="arguments for reduce function", default=None, type=json.loads)
 parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str)
 parser.add_argument("-rt", "--reduce-type", help="what to reduce", default=None, type=str,
                     choices=["data", "features", "logits", "eval"])
@@ -44,11 +48,12 @@ parser.add_argument("-tr", "--train-regressions", help="list of regressions", de
 args = parser.parse_args()
 print("args:", vars(args))
 if args.group_by is not None:
-    assert args.reduce_mode in {"data": {"most_recent"}, "features": {"max"}, "logits": {"mean"}, "eval": {"argmax"}}[args.reduce_type]  # TODO: multiple reduce modes
+    assert args.reduce_mode in {"data": {"concatenate", "most_recent"}, "features": {"max"}, "logits": {"mean"}, "eval": {"argmax"}}[args.reduce_type]  # TODO: multiple reduce modes
 
 p = Preprocessor.get_default()
 t = Tokenizer()
 tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
+idf = InverseFrequenciesCounter().load(os.path.join(args.dataset_dir, args.idf))
 
 DATA_COL = "encoded_data"
 
@@ -58,8 +63,6 @@ with Chronostep("reading input"):
     transformations = args.label_transformations
 
 with Chronostep("encoding reports"):
-    input_cols = ["diagnosi", "macroscopia", "notizie"]
-
     sets = {"train": Dataset(os.path.join(args.dataset_dir, TRAINING_SET)), "val": Dataset(os.path.join(args.dataset_dir, VALIDATION_SET))}
 
 
@@ -69,8 +72,9 @@ with Chronostep("encoding reports"):
 
     for set_name in ["train", "val"]:
         dataset = sets[set_name]
-        dataset.set_input_cols(input_cols)
+        dataset.set_input_cols(args.input_cols)
         dataset.add_encoded_column(full_pipe, DATA_COL, args.max_length)
+        dataset.set_encoded_data_column(DATA_COL)
         dataset.prepare_for_training(classifications, regressions, transformations)
         if set_name == "train":
             columns_codec = dataset.get_columns_codec()
@@ -86,7 +90,7 @@ with Chronostep("encoding reports"):
                 dataset.lazy_filter(args.filter, args.filter_args)
 
             if args.reduce_type == "data":
-                dataset.lazy_reduce(args.reduce_mode)
+                dataset.lazy_reduce(args.reduce_mode, args.reduce_args)
 
             dataset.compute_lazy()
 
@@ -94,12 +98,17 @@ with Chronostep("encoding reports"):
     if args.group_by is not None and args.reduce_type != "eval":
         training.assert_disjuncted(validation)
 
-training_labels = training.get_labels()
+    # training.limit(16840)
+    # validation.limit(2048)
 
-print("train labels distribution:")
-for column in training.get_labels_columns():
-    print(training_labels[column].value_counts()) #TODO:correct
-    print()
+with Chronostep("calculating labels distributions"):
+    training_labels = training.get_labels()
+    '''for column in training.classifications:
+        print(training_labels[column].value_counts()) #TODO:correct
+        print()
+    # for column in training.regressions:
+    #     print(training_labels[column].value_counts()) #min, max, std
+    #     print()'''
 
 with Chronostep("creating model"):
     model_name = args.name or random_name(str(args.model).split(".")[-1])
@@ -111,7 +120,7 @@ with Chronostep("creating model"):
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
-    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc, "labels_codec": training.get_columns_codec()}
+    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc, "labels_codec": training.get_columns_codec(), "idf": idf}
     if args.model_args is not None:
         model_args.update(args.model_args)
     if args.net_seed is not None:
@@ -144,9 +153,13 @@ info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed",
 if args.data_seed is not None:
     np.random.seed(args.data_seed)
 
+from utils.utilities import hist
+hist([len(ex) for ex in training.get_data(DATA_COL)])
+
 tb_dir = os.path.join(model_dir, "logs")
 callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),
-             ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True)]
+             ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True),
+             EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)]
 
 with Chronostep("training"):
     model.fit(training.get_data(DATA_COL, args.reduce_type == "features" or args.reduce_type == "logits"), training_labels, validation.get_data(DATA_COL, args.reduce_type != "data"), validation.get_labels(), info, callbacks, **hyperparameters)

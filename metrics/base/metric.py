@@ -16,3 +16,9 @@ class Metric(ABC):
     @abstractmethod
     def __call__(self, *args, **kwargs):
         pass
+
+    def __str__(self):
+        return self.__call__()
+
+    def __repr__(self):
+        return self.__call__()
