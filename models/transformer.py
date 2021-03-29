@@ -24,6 +24,8 @@ class Transformer(ModularBase):
         self.emb_dim_sqrt = math.sqrt(embedding_dim)
 
     def extract_features(self, x):
+        x = x.long()
+        x[x < 0] += 65536
         batch_embs = self.word_embedding(x) * self.emb_dim_sqrt
         mask = x == 0
         #batch_embs = self.pos_encoder(batch_embs)  # TODO: check and add position encoding

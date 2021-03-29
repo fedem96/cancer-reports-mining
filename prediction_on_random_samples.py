@@ -10,7 +10,7 @@ from utils.dataset import Dataset
 from utils.serialization import load
 from utils.utilities import merge_and_extract
 
-parser = argparse.ArgumentParser(description='Train a model')
+parser = argparse.ArgumentParser(description='Predict random samples')
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 # parser.add_argument("-f", "--filter",

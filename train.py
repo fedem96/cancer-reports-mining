@@ -153,8 +153,8 @@ info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed",
 if args.data_seed is not None:
     np.random.seed(args.data_seed)
 
-from utils.utilities import hist
-hist([len(ex) for ex in training.get_data(DATA_COL)])
+# from utils.utilities import hist
+# hist([len(ex) for ex in training.get_data(DATA_COL)])
 
 tb_dir = os.path.join(model_dir, "logs")
 callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),

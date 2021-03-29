@@ -6,7 +6,7 @@ import torch
 
 from utils.serialization import load
 
-parser = argparse.ArgumentParser(description='Train a model')
+parser = argparse.ArgumentParser(description='Prediction on user input')
 parser.add_argument("-m", "--model", help="model to use", default=None, type=str, required=True)
 # parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 args = parser.parse_args()

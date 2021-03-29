@@ -17,6 +17,7 @@ from metrics.metrics import Metrics
 from metrics.mf1 import MacroF1Score
 
 
+# TODO: move away
 def padding_tensor(sequences, max_len):
     num = len(sequences)
     out_dims = (num, max_len)
@@ -112,6 +113,16 @@ class ModularBase(nn.Module, ABC):
     def forward(self, x):
         pass
 
+    def _future_forward(self, x, reduce_features=True):
+        # x.shape: (num_records, num_reports, num_tokens)
+        ''' pseudocode '''
+        # TODO: finish
+        words_features = self.extract_features(x)
+        reports_features = self.reduce_words(words_features)
+        if reduce_features:
+            records_features = self.reduce_features(reports_features)
+        pass
+
     def _forward_simple(self, x):
         features = self.extract_features(x)
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
@@ -178,9 +189,9 @@ class ModularBase(nn.Module, ABC):
             self.activation_penalty = hyperparams["activation_penalty"]
 
             if self.reduce_type is None or self.reduce_type == "data":
-                train_data = padding_tensor([torch.tensor(report, device=self.current_device()) for report in train_data],400)[0]
+                train_data = padding_tensor([torch.tensor(report, device=self.current_device(), dtype=torch.int16) for report in train_data],400)[0]
                 if val_data is not None:
-                    val_data = padding_tensor([torch.tensor(report, device=self.current_device()) for report in val_data],400)[0]
+                    val_data = padding_tensor([torch.tensor(report, device=self.current_device(), dtype=torch.int16) for report in val_data],400)[0]
             else:
                 if self.reduce_type == "eval":
                     train_data = [torch.tensor(report, device=self.current_device()) for report in train_data]
@@ -349,16 +360,6 @@ class ModularBase(nn.Module, ABC):
 
     def grad_norm(self):
         return sum(p.grad.detach().norm() for p in list(self.parameters()) if p.grad is not None).item()
-
-    # def infer(self, x):
-    #     with torch.no_grad():
-    #         if type(x) == list or type(x) == tuple:
-    #             x = [torch.tensor(example, device=self.current_device()) for example in x]
-    #             predictions = self(x)
-    #         else:
-    #             x = torch.tensor(x, device=self.current_device())
-    #             predictions = self([x])
-    #     return predictions
 
 
 if __name__ == "__main__":

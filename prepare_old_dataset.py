@@ -51,7 +51,7 @@ dfTrain, dfVal = train_test_split(dfTrain, "anno", test_from_year=2008)
 # val:    10952 samples
 # test:   12719 samples
 
-dfUnsup = df_hists[~df_hists.id_neopl.isin(set(dataset.id_neopl.unique()))]      # 1497881 samples
+dfUnsup = df_hists[(~df_hists.id_neopl.isin(set(dataset.id_neopl.unique()))) & (~df_hists.id_tot.isin(set(dataset.id_tot.unique())))]      # 1372421 samples
 dfUnsup = dfUnsup.drop(columns=["id_neopl"])
 # TODO: add an index to unsupervised csv
 

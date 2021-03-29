@@ -87,6 +87,20 @@ class Dataset:
         self.transformations = transformations
         self._update_nunique()
 
+    def set_classifications(self, classifications):
+        assert len(classifications) > 0
+        self.classifications = classifications
+        self._update_nunique()
+
+    def set_regressions(self, regressions):
+        assert len(regressions) > 0
+        self.classifications = regressions
+        self._update_nunique()
+
+    def set_transformations(self, transformations):
+        assert len(transformations) > 0
+        self.classifications = transformations
+
     def _update_columns_codec(self):
         # unique_values = {col: self.dataframe[col].dropna().unique() for col in self.classifications + self.regressions}
         self.columns_codec = LabelsCodecFactory.from_transformations(self.classifications, self.regressions, self.transformations)
