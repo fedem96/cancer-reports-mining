@@ -81,7 +81,8 @@ df.loc[mask_invalid_rows, "numero_sentinella_positivi"] = np.NaN
 
 ''' clean "grading" column '''
 df.loc[df.index[df["grading"] == "A"], "grading"] = np.NaN
-df.loc[df.index[df["grading"] == "B"], "grading"] = np.NaN
+df.loc[df.index[df["grading"] == "B"], "grading"] = np.Na
+df.drop(df[df["grading"] == "0"].index, inplace=True)
 
 ''' clean "mib1", "cerb" and "ki67" columns '''
 pos_regex = re.compile("p.*o.*s", re.I)
