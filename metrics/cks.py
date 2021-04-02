@@ -31,4 +31,6 @@ class CohenKappaScore(Metric):
     def __call__(self, *args, **kwargs):
         accuracy = self.num_correct / self.tot
         by_chance_accuracy = sum([self.tot_preds[key] * self.tot_grth[key] for key in self.tot_preds]) / self.tot ** 2
+        if by_chance_accuracy == 1:
+            return 1
         return (accuracy - by_chance_accuracy) / (1 - by_chance_accuracy)

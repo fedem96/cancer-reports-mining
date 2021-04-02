@@ -30,6 +30,6 @@ class EmbMaxLin(ModularBase):
         super(EmbMaxLin, self).__init__(modules, deep_features, "embmaxlin", *args, **kwargs)
 
     def extract_features(self, x):
-        deep_words = self.word_embedding(x)
-        deep_reports = self.convs(deep_words.permute(0,2,1)).max(dim=2).values
-        return F.relu(self.fc(F.relu(deep_reports)))
+        x = self.word_embedding(x)
+        x = self.convs(x.permute(0,2,1)).permute(0,2,1)
+        return F.relu(self.fc(F.relu(x)))

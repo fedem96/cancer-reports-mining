@@ -1,5 +1,4 @@
 import argparse
-import json
 
 import numpy as np
 import pandas as pd
@@ -22,19 +21,11 @@ parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling",
 parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
-# parser.add_argument("-im", "--input-mappings", help="how to map the input", default={}, type=json.loads)
-# parser.add_argument("-it", "--input-transformations", help="how to transform the input", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to use", default=None, type=str, required=True)
-# parser.add_argument("-ma", "--model-args", help="saved model to train", default=None, type=json.loads)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
-# parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str)
-# parser.add_argument("-rt", "--reduce-type", help="what to reduce", default=None, type=str,
-#                     choices=["data", "features", "logits", "eval"])
 parser.add_argument("-s", "--set", help="set of the dataset", choices=["training", "validation", "test"], default="validation", type=str)
 args = parser.parse_args()
 print("args:", vars(args))
-# if args.group_by is not None:
-#     assert args.reduce_mode in {"data": {"most_recent"}, "features": {"max"}, "logits": {"mean"}, "eval": {"argmax"}}[args.reduce_type]  # TODO: multiple reduce modes
 
 assert args.group_by is not None # TODO: without groupby not handled
 
@@ -44,8 +35,6 @@ model = load(args.model)
 model.eval()
 torch.set_grad_enabled(False)
 classifications, regressions = list(model.classifiers.keys()), list(model.regressors.keys())
-
-assert model.reduce_type == "features" # TODO: only features reduce type is handled
 
 DATA_COL = "encoded_data"
 dataset = Dataset(os.path.join(args.dataset_dir, args.set + "_set.csv"))
@@ -64,14 +53,14 @@ if args.group_by is not None:
 if args.data_seed is not None:
     np.random.seed(args.data_seed)
 
-data, labels = dataset.get_data(DATA_COL, multi_layer), dataset.get_labels().reset_index(drop=True)
+data, labels = dataset.get_data(DATA_COL), dataset.get_labels().reset_index(drop=True)
 
 while True:
     index = np.random.randint(0,len(data))
     print("\nrandom index: {}".format(index))
-    encoded_record = [torch.tensor(t, device=device) for t in data[index]]
+    encoded_record = torch.tensor(data[index].astype(np.int16)).unsqueeze(0)
     record_labels = labels.loc[index]
-    out = model([encoded_record])
+    out = model(encoded_record)
     record = list(merge_and_extract(dataset.dataframe[index], input_cols))
     print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
@@ -85,7 +74,7 @@ while True:
             print("groundtruth: {}, groundtruth index: {}".format(grth, grth_idx))
         else:
             print("no groundtruth available")
-        if 'all_features' in out:
+        if 'all_features' in out:  # TODO: make compatible with new source code
             record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
             for idx_fr, fr in enumerate(model.features_reducers):
                 num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(record))]
@@ -109,7 +98,7 @@ while True:
             print("groundtruth: {}, encoded groundtruth: {}".format(grth, encoded_grth))
         else:
             print("no groundtruth available")
-        if 'all_features' in out:
+        if 'all_features' in out:  # TODO: make compatible with new source code
             record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
             for idx_fr, fr in enumerate(model.features_reducers):
                 num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(record))]

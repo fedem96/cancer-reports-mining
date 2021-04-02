@@ -1,5 +1,4 @@
 import argparse
-import json
 
 import numpy as np
 import torch
@@ -27,9 +26,10 @@ while True:
         report = input()
         if report == "":
             break
-        encoded_record.append(torch.tensor(model.encode_report(report), device=device))
+        encoded_record.append(model.encode_report(report))
 
-    out = model([encoded_record])
+    max_len = max([len(enc_rep) for enc_rep in encoded_record])
+    out = model(torch.stack([torch.tensor(np.pad(enc_rep, (0,max_len-len(enc_rep))), device=device) for enc_rep in encoded_record]).unsqueeze(0))
     # print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
         print(cls_var)
@@ -38,7 +38,7 @@ while True:
         print("prediction logits: {}".format(out[cls_var].cpu().numpy()))
         print("prediction index: {}".format(prediction_idx))
         print("prediction: {}".format(prediction))
-        if 'all_features' in out:
+        if 'all_features' in out:  # TODO: make compatible with new source code
             record_features = out['all_features'][0]  # [0] because we want the first (and only) record of the batch
             for idx_fr, fr in enumerate(model.features_reducers):
                 num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(encoded_record))]
@@ -56,7 +56,7 @@ while True:
         encoded_prediction = out[reg_var].item()
         prediction = model.labels_codec.codecs[reg_var].decode(encoded_prediction)
         print("prediction:  {}, encoded prediction:  {}".format(prediction, encoded_prediction))
-        if 'all_features' in out:
+        if 'all_features' in out:  # TODO: make compatible with new source code
             record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
             for idx_fr, fr in enumerate(model.features_reducers):
                 num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(encoded_record))]

@@ -1,5 +1,4 @@
 import pickle
-import re
 import sys
 from multiprocessing import Pool
 
@@ -33,8 +32,8 @@ class Dataset:
         self._update_nunique()
         self.grouping_attributes = None
         self.filtering_columns = []
-        self.reducing_strategy = None
-        self.reducing_args = None
+        self.must_concatenate = False
+        self.max_total_length = None
         self.encoded_data_column = None
 
     def set_input_cols(self, input_cols):
@@ -81,7 +80,7 @@ class Dataset:
             self.dataframe[new_column_name] = [sequence[:max_length] for sequence in self.dataframe[new_column_name]]
         self.encoded_input_cols.append(new_column_name)
 
-    # TODO: rename this function
+    # TODO: rename or remove this function
     def prepare_for_training(self, classifications=[], regressions=[], transformations={}):
         self.classifications, self.regressions = classifications, regressions
         self.transformations = transformations
@@ -134,13 +133,28 @@ class Dataset:
             return pd.concat(l)
         return self.dataframe[self.get_labels_columns()]
 
-    def get_data(self, column_name, multi_layer=False):
+    def get_data(self, column_name):
+        # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
         if type(self.dataframe) == list:
-            data = [list(df[column_name].values) for df in self.dataframe]
-            if not multi_layer:
-                data = [d[0] for d in data]
-            return data
-        return list(self.dataframe[column_name].values)
+            reports_lengths = [[len(report) for report in record[column_name].values] for record in self.dataframe]
+            records_sizes = [len(record) for record in self.dataframe]
+            max_report_length = max([max(lengths) for lengths in reports_lengths])
+            max_record_size = max(records_sizes)
+            data = np.stack(                                                                        # stack records to create dataset
+                [
+                    np.pad(                                                                         # pad record
+                            np.stack([                                                              # stack reports to create record
+                                np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) # pad report
+                                for report in record[column_name].values
+                            ]
+                        ), ((0,max_record_size-len(record)),(0,0)))
+                    for record in self.dataframe
+                ]
+            )
+            return data # data.shape: (num_records, num_reports, num_tokens)
+        # without group by, each row is treated as a single-report record
+        max_report_length = max([len(report) for report in self.dataframe[column_name].values])
+        return np.expand_dims(np.stack([np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) for report in self.dataframe[column_name].values]), 1)
 
     def group_by(self, attributes):
 
@@ -214,9 +228,6 @@ class Dataset:
                 def _same_year(df, *args):
                     return df['anno_referto'].values == df['anno_diagnosi'].values
                 def _with_classifier(df, fa):
-                    tot_acceptable = 0
-                    tot_unacceptable = 0
-                    tot_forced_accept = 0
                     encoded_data_column = fa["encoded_data_column"]
                     torch_reports = [torch.tensor(report, device=model.current_device()) for report in df[encoded_data_column]]
                     batch_size = 64
@@ -237,6 +248,7 @@ class Dataset:
         self.filtering_columns.append(filtering_column_name)
         self.dataframe[filtering_column_name] = filter_result
 
+    # TODO: refactor removing this function
     def filter_now(self):
         def _filter(self_dataframe, filtering_columns):
             dataframe = []
@@ -263,54 +275,31 @@ class Dataset:
 
         self.dataframe = _filter(self.dataframe, self.filtering_columns)
 
-    def reduce(self, reduce_strategy, reduce_args=None):
-        _self = self
-        def _reduce(self_dataframe, reduce_strat, r_args):
-            if callable(reduce_strat):
-                reduce_fn = reduce_strat
-            elif type(reduce_strat) == str:
-                def _most_recent(group_df, ra): # DEPRECATED
-                    mr_year = max(group_df['anno_referto'].values)
-                    mask = group_df['anno_referto'].values == mr_year
-                    if not any(mask):
-                        mask = ~mask
-                    group_df = group_df[mask] # TODO: this line is slow
-                    if len(group_df) > 1:
-                        mr_isto = max(group_df['id_isto'].values)
-                        mask = group_df['id_isto'].values == mr_isto
-                        group_df = group_df[mask]
-                    assert len(group_df) == 1
+    def concatenate_reports(self, max_total_length=None):
+        def _concatenate_reports(self_dataframe, input_cols, encoded_data_column, max_tot_len):
+            if len(input_cols) == 0:
+                raise Exception("input columns not set")
+            if encoded_data_column is None:
+                raise Exception("encoded data column not set")
+            def _concatenate(group_df, max_tot_l):
+                if len(group_df) == 1:
                     return group_df
-                def _concatenate(group_df, ra):
-                    if len(_self.input_cols) == 0:
-                        raise Exception("input columns not set")
-                    if _self.encoded_data_column is None:
-                        raise Exception("encoded data column not set")
-                    if len(group_df) == 1:
-                        return group_df
-                    values = np.concatenate(group_df[_self.encoded_data_column].values)
-                    if ra is not None and "max_length" in ra:
-                        values = values[:ra["max_length"]]
-                    group_df.at[group_df.index[0], _self.encoded_data_column] = values
-                    return group_df.head(1)
-                reduce_dict = {"most_recent": _most_recent, "concatenate": _concatenate}
-                reduce_fn = reduce_dict[reduce_strat]
-            else:
-                raise ValueError("Invalid reduce method")
+                values = np.concatenate(group_df[encoded_data_column].values)
+                if max_tot_len is not None:
+                    values = values[:max_tot_l]
+                group_df.at[group_df.index[0], encoded_data_column] = values
+                return group_df.head(1)
             dataframe = []
             for group in self_dataframe:
-                dataframe.append(reduce_fn(group, r_args))
-            return dataframe #TODO: finish and check
-        self.dataframe = caching(_reduce)(self.dataframe, reduce_strategy, reduce_args)
+                dataframe.append(_concatenate(group, max_tot_len))
+            return dataframe
+        self.dataframe = caching(_concatenate_reports)(self.dataframe, self.input_cols, self.encoded_data_column, max_total_length)
 
-    def lazy_reduce(self, reduce_strategy, reduce_args=None):
-        if self.reducing_strategy is not None:
-            raise Exception("Already reduced: cannot reduce twice")
-        self.reducing_strategy = reduce_strategy
-        self.reducing_args = reduce_args
-
-    def reduce_now(self):
-        self.reduce(self.reducing_strategy, self.reducing_args)
+    def lazy_concatenate_reports(self, max_total_length=None):
+        if self.must_concatenate:
+            raise Exception("Concatenate already specified: cannot concatenate twice")
+        self.must_concatenate = True
+        self.max_total_length = max_total_length
 
     def compute_lazy(self):
         if self.grouping_attributes is not None:
@@ -319,8 +308,8 @@ class Dataset:
             if len(self.filtering_columns) > 0:
                 self.filter_now()
 
-            if self.reducing_strategy is not None:
-                self.reduce_now()
+            if self.must_concatenate:
+                self.concatenate_reports(self.max_total_length)
 
     def nunique(self, var):
         return self._nunique[var]
