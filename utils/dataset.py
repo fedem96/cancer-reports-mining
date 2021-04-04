@@ -182,39 +182,6 @@ class Dataset:
         assert len(set(self.key_to_index.keys()).intersection(other_dataset.key_to_index.keys())) == 0
         # number of patients in both sets: len( set(list(zip(*list(self.key_to_index.keys())))[0]).intersection(set(list(zip(*list(other_dataset.key_to_index.keys())))[0])) )
 
-    def filter(self, filter_strategy, filter_args=None):
-        def _filter(self_dataframe, filter_strat, f_args):
-            if callable(filter_strat):
-                filter_fn = filter_strat
-            elif type(filter_strat) == str:
-                if filter_strat == "classifier":
-                    model = load(filter_args["path"])
-                    model.eval()
-                    self.add_encoded_column(model.encode_report, filter_args["encoded_data_column"], filter_args["max_length"])
-                def _same_year(group_df, *args):
-                    mask = group_df['anno_referto'].values == group_df['anno_diagnosi'].values
-                    if not any(mask):
-                        mask = ~mask
-                    group_df = group_df[mask] # TODO: this line is slow
-                    return group_df
-                def _with_classifier(group_df, fa):
-                    encoded_data_column = fa["encoded_data_column"]
-                    torch_record = [torch.tensor(report) for report in group_df[encoded_data_column]]
-                    mask = model(torch_record)['sede_icdo3'].argmax(dim=1).cpu().numpy().astype(bool)
-                    if any(mask):
-                        group_df = group_df[mask]
-                    return group_df
-                filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
-                filter_fn = filter_dict[filter_strat]
-            else:
-                raise ValueError("Invalid filter method")
-            dataframe = []
-            for key, group in self_dataframe:
-                r, g = filter_fn(group, f_args)
-                dataframe.append((key, g))
-            return dataframe
-        self.dataframe = _filter(self.dataframe, filter_strategy, filter_args)
-
     def lazy_filter(self, filter_strategy, filter_args=None):
         def _filter(self_dataframe, filter_strat, f_args):
             if callable(filter_strat):
@@ -229,12 +196,17 @@ class Dataset:
                     return df['anno_referto'].values == df['anno_diagnosi'].values
                 def _with_classifier(df, fa):
                     encoded_data_column = fa["encoded_data_column"]
-                    torch_reports = [torch.tensor(report, device=model.current_device()) for report in df[encoded_data_column]]
+                    max_report_length = fa["max_length"] or max([len(report) for report in df[encoded_data_column]])
+                    reports = np.stack([
+                        np.pad(report[:max_report_length].astype(np.uint16), (0, max(0, max_report_length - len(report))))
+                        for report in df[encoded_data_column]
+                    ])
+                    torch_reports = torch.tensor(reports.astype(np.int16), device=model.current_device()).unsqueeze(1)
                     batch_size = 64
                     filter_result = []
                     for i in range(0, len(torch_reports), batch_size):
                         batch = torch_reports[i: min(i+batch_size, len(torch_reports))]
-                        filter_result.append( model(batch)['sede_icdo3'].argmax(dim=1).cpu().numpy().astype(bool) )
+                        filter_result.append( model(batch, pool_reports=False)['sede_icdo3'].argmax(dim=3).squeeze().cpu().numpy().astype(bool) )
                     print("tot_acceptable: {}, tot_unacceptable: {}".format((np.concatenate(filter_result)).sum(), (~np.concatenate(filter_result)).sum()))
                     return np.concatenate(filter_result)
                 filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
@@ -248,8 +220,7 @@ class Dataset:
         self.filtering_columns.append(filtering_column_name)
         self.dataframe[filtering_column_name] = filter_result
 
-    # TODO: refactor removing this function
-    def filter_now(self):
+    def filter(self):
         def _filter(self_dataframe, filtering_columns):
             dataframe = []
             tot_acceptable = 0
@@ -306,7 +277,7 @@ class Dataset:
             self.group_by(self.grouping_attributes)
 
             if len(self.filtering_columns) > 0:
-                self.filter_now()
+                self.filter()
 
             if self.must_concatenate:
                 self.concatenate_reports(self.max_total_length)
