@@ -15,6 +15,7 @@ from metrics.dbcs import DumbBaselineComparisonScore
 from metrics.mae import MeanAverageError
 from metrics.metrics import Metrics
 from metrics.mf1 import MacroF1Score
+from metrics.nmae import NormalizedMeanAverageError
 
 
 class ModularBase(nn.Module, ABC):
@@ -46,6 +47,8 @@ class ModularBase(nn.Module, ABC):
         self.dumb_baseline_train_accuracy = {}
         self.dumb_baseline_val_accuracy = {}
         self.num_classes = {}
+        self.train_stds = {}
+        self.val_stds = {}
 
         self.reduce_type = "data"
         self.features_reducers = None
@@ -53,8 +56,8 @@ class ModularBase(nn.Module, ABC):
 
         self.optimizer = None
 
-        self.classification_metrics = ["Accuracy", "Accuracy", "M-F1", "CKS", "DBCS"]
-        self.regression_metrics = ["MAE"]
+        self.classification_metrics = ["Accuracy", "M-F1", "CKS", "DBCS"]
+        self.regression_metrics = ["MAE", "NMAE"]
 
         self.tokens_pooler = None
         self.reports_pooler = None
@@ -150,6 +153,8 @@ class ModularBase(nn.Module, ABC):
             self.dumb_baseline_val_accuracy[var] = (y_val == np.argmax(classes_occurrences)).sum() / len(y_val)
         for var in self.regressors:
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
+            self.train_stds[var] = train_labels[var].dropna().values.std()
+            self.val_stds[var] = val_labels[var].dropna().values.std()
 
     def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, callbacks: List[Callback]=[], **hyperparams):
         self.info = info
@@ -171,8 +176,8 @@ class ModularBase(nn.Module, ABC):
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
-            train_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(True), **self.create_regressions_metrics(), **self.create_grad_norm_metrics()})
-            val_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(False), **self.create_regressions_metrics()})
+            train_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(True), **self.create_regressions_metrics(True), **self.create_grad_norm_metrics()})
+            val_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(False), **self.create_regressions_metrics(False)})
             for epoch in range(hyperparams["max_epochs"]):
                 [c.on_epoch_start(self, epoch) for c in callbacks]
                 train_metrics.reset(), val_metrics.reset()
@@ -311,9 +316,11 @@ class ModularBase(nn.Module, ABC):
             "DBCS": {var: DumbBaselineComparisonScore(dbcs[var]) for var in self.classifiers}
         }
 
-    def create_regressions_metrics(self):
+    def create_regressions_metrics(self, training: bool):
+        stds = self.train_stds if training else self.val_stds
         return {
-            "MAE": {var: MeanAverageError() for var in self.regressors}
+            "MAE": {var: MeanAverageError() for var in self.regressors},
+            "NMAE": {var: NormalizedMeanAverageError(stds[var]) for var in self.regressors}
         }
 
     def create_grad_norm_metrics(self):

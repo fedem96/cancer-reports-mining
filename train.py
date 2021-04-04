@@ -106,8 +106,10 @@ with Chronostep("calculating labels distributions"):
         print()
     for column in training.regressions:
         print(column)
-        print(training_labels[column].min())
-        print(training_labels[column].max())
+        print("min:", training_labels[column].min())
+        print("max:", training_labels[column].max())
+        print("mean:", training_labels[column].mean())
+        print("std:", training_labels[column].std())
         print()
 
 with Chronostep("creating model"):
@@ -169,5 +171,4 @@ with Chronostep("training"):
 # TODO: add transformations
 # TODO: clean code and apis
 # TODO: speedup script
-# TODO: speedup model
 # TODO: experiment

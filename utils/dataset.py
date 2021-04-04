@@ -17,7 +17,7 @@ class Dataset:
     def __init__(self, csv_file):
         self.csv_file = csv_file
         self.dataframe = pd.read_csv(csv_file)
-        self.dataframe.columns = self.dataframe.columns.str.replace('%', '%25')  # TODO: change
+        self.dataframe.columns = self.dataframe.columns.str.replace('_%', '')
         self.input_cols = []
         self.encoded_input_cols = []
         self.full_pipe = None
