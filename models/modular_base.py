@@ -230,7 +230,7 @@ class ModularBase(nn.Module, ABC):
         losses = {}
         device = self.current_device()
 
-        total_gradient_norm = 0
+        old_grad_vector = self.grad_vector()
         gradient_norms = {} # TODO: removable, it is used only during debug
 
         for var in self.classifiers:
@@ -244,8 +244,9 @@ class ModularBase(nn.Module, ABC):
 
             if training:
                 loss.backward(retain_graph=True)
-                gradient_norm = self.grad_norm() - total_gradient_norm
-                total_gradient_norm += gradient_norm
+                new_grad_vector = self.grad_vector()
+                gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
+                old_grad_vector = new_grad_vector
                 gradient_norms[var] = gradient_norm
                 metrics["GradNorm"][var].update(gradient_norm, num_batches)
 
@@ -267,8 +268,9 @@ class ModularBase(nn.Module, ABC):
 
             if training:
                 loss.backward(retain_graph=True)
-                gradient_norm = self.grad_norm() - total_gradient_norm
-                total_gradient_norm += gradient_norm
+                new_grad_vector = self.grad_vector()
+                gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
+                old_grad_vector = new_grad_vector
                 gradient_norms[var] = gradient_norm
                 metrics["GradNorm"][var].update(gradient_norm, num_batches)
 
@@ -280,8 +282,8 @@ class ModularBase(nn.Module, ABC):
             regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
             if training:
                 regularization_loss.backward()
-                gradient_norm = self.grad_norm() - total_gradient_norm
-                total_gradient_norm += gradient_norm
+                new_grad_vector = self.grad_vector()
+                gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
                 gradient_norms["features_regularization_l1"] = gradient_norm
 
     def add_classification(self, task_name, num_classes):
@@ -328,8 +330,9 @@ class ModularBase(nn.Module, ABC):
             "GradNorm": {var: Average(max) for var in list(self.classifiers.keys()) + list(self.regressors.keys())}
         }
 
-    def grad_norm(self):
-        return sum(p.grad.detach().norm() for p in list(self.parameters()) if p.grad is not None).item()
+    def grad_vector(self):
+        device = self.current_device()
+        return torch.cat([p.grad.detach().flatten() if p.grad is not None else torch.zeros(p.shape, device=device).flatten() for p in self.parameters()])
 
 
 if __name__ == "__main__":
