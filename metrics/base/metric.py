@@ -18,7 +18,7 @@ class Metric(ABC):
         pass
 
     def __str__(self):
-        return self.__call__()
+        return str(self.__call__())
 
     def __repr__(self):
-        return self.__call__()
+        return str(self.__call__())

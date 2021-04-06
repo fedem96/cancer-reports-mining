@@ -91,21 +91,51 @@ def _annotate_heatmap(ax, annot_data):
     for x, y, val in zip(xpos.flat, ypos.flat, annot_data.flatten()):
         if val != 0:
             text_color = ".15" if val < max_val/2 else "w"
-            annotation = ("{:.2g}").format(val)
+            # annotation = ("{:.2g}").format(val)
+            annotation = "{}".format(val)
             text_kwargs = dict(color=text_color, ha="center", va="center")
             ax.text(x, y, annotation, **text_kwargs)
 
 
-def show_confusion_matrix(y_true, y_pred, output_file=None):  # TODO: add marginal accuracies
+def show_confusion_matrix(y_true, y_pred, title=None, output_file=None):  # TODO: add marginal accuracies
     import matplotlib.pyplot as plt
     from sklearn.metrics import confusion_matrix
     import seaborn as sns
     df = pd.DataFrame({"true": y_true, "pred": y_pred})
     df = df.dropna()
-    m = confusion_matrix(y_true, y_pred)  # TODO: avoid nans
+    try:
+        m = confusion_matrix(y_true, y_pred, labels=range(1+max(*y_true, *y_pred)))  # TODO: avoid nans
+    except:
+        m = confusion_matrix(y_true, y_pred)
     ax = sns.jointplot(data=df, x="pred", y="true", kind="hist", cmap="Blues",
                   joint_kws={"discrete": True}, marginal_kws={"discrete": True})
     _annotate_heatmap(ax.ax_joint, m)
+    if title is not None:
+        plt.title(title)
+
+    if output_file is None:
+        plt.show()
+    else:
+        plt.savefig(output_file)
+        plt.clf()
+
+
+def show_regression_2Dkde(y_true, y_pred, title=None, output_file=None):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    df = pd.DataFrame({"true": y_true, "pred": y_pred})
+    df = df.dropna()
+    ax = sns.jointplot(data=df, x="pred", y="true", kind='kde', shade=True, cmap="YlGn", bw_adjust=.6)
+    x0, x1 = ax.ax_joint.get_xlim()
+    y0, y1 = ax.ax_joint.get_ylim()
+    m = min(x0, y0)
+    M = max(x1, y1)
+    ax.ax_joint.set_xlim(m, M)
+    ax.ax_joint.set_ylim(m, M)
+    lims = [m, M]
+    ax.ax_joint.plot(lims, lims)
+    if title is not None:
+        plt.title(title)
 
     if output_file is None:
         plt.show()

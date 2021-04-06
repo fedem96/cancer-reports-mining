@@ -101,15 +101,25 @@ with Chronostep("encoding reports"):
 
 with Chronostep("calculating labels distributions"):
     training_labels = training.get_labels()
+    validation_labels = validation.get_labels()
     for column in training.classifications:
-        print(training_labels[column].value_counts()) #TODO:correct
+        print("training")
+        print(training_labels[column].value_counts()) # TODO: show also percentages
+        print("validation")
+        print(validation_labels[column].value_counts())
         print()
     for column in training.regressions:
         print(column)
+        print("training")
         print("min:", training_labels[column].min())
         print("max:", training_labels[column].max())
         print("mean:", training_labels[column].mean())
         print("std:", training_labels[column].std())
+        print("validation")
+        print("min:", validation_labels[column].min())
+        print("max:", validation_labels[column].max())
+        print("mean:", validation_labels[column].mean())
+        print("std:", validation_labels[column].std())
         print()
 
 with Chronostep("creating model"):
@@ -151,7 +161,7 @@ with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)
 
 info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed", "filter", "filter_args", "concatenate_reports"
-                                                        "pool_reports", "pool_tokens"}},
+                                                        "model_args", "pool_reports", "pool_tokens"}},
         "name": model_name, "dataset": args.dataset_dir.split(".")[-1]}
 
 if args.data_seed is not None:
@@ -166,7 +176,7 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
              EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)]
 
 with Chronostep("training"):
-    model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation.get_labels(), info, callbacks, **hyperparameters)
+    model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation_labels, info, callbacks, **hyperparameters)
 
 # TODO: add transformations
 # TODO: clean code and apis

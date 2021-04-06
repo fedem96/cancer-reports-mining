@@ -3,13 +3,13 @@ import math
 import torch
 import torch.nn as nn
 
-# from layers.positional_encoding import PositionalEncoding
+from layers.positional_encoding import PositionalEncoding
 from models.modular_base import ModularBase
 
 
 class Transformer(ModularBase):
 
-    def __init__(self, vocab_size, embedding_dim, deep_features, dropout, num_heads, n_layers, net_seed=None, *args, **kwargs):
+    def __init__(self, vocab_size, embedding_dim, deep_features, dropout, num_heads, n_layers, encode_position, net_seed=None, *args, **kwargs):
 
         if net_seed is not None:
             torch.manual_seed(net_seed)
@@ -20,13 +20,16 @@ class Transformer(ModularBase):
             "transformer_encoder": nn.TransformerEncoder(encoder_layers, n_layers)
         }
         super(Transformer, self).__init__(modules, deep_features, "transformer", *args, **kwargs)
-        # self.pos_encoder = PositionalEncoding(embedding_dim, dropout)
+        self.encode_position = encode_position
+        if encode_position:
+            self.pos_encoder = PositionalEncoding(embedding_dim, dropout)
         self.emb_dim_sqrt = math.sqrt(embedding_dim)
 
     def extract_features(self, x):
         batch_embs = self.word_embedding(x) * self.emb_dim_sqrt
         mask = x == 0
-        #batch_embs = self.pos_encoder(batch_embs)  # TODO: check and add position encoding
+        if self.encode_position:
+            batch_embs = self.pos_encoder(batch_embs)
         return self.transformer_encoder(batch_embs.permute(1, 0, 2), src_key_padding_mask=mask).permute(1,0,2)
 
 
