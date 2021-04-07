@@ -86,7 +86,7 @@ stds = {}
 for var in model.classifiers:
     classes_occurrences = labels[var].value_counts().sort_index().values
     num_classes[var] = len(classes_occurrences)
-    classes_weights = sum(classes_occurrences) / classes_occurrences # TODO: cambiare pesi
+    classes_weights = 1 / classes_occurrences # TODO: cambiare pesi
     classes_weights = torch.from_numpy(classes_weights).float().to(model.current_device())
     losses[var] = torch.nn.CrossEntropyLoss(classes_weights) # TODO: spesso non la calcola
     dumb_baseline_accuracy[var] = max(classes_occurrences) / sum(classes_occurrences)
@@ -165,19 +165,22 @@ with Chronometer("calculating metrics"):
 pprint(metrics)
 
 evaluate_dir = os.path.join(args.model + "_evaluate", args.set)
+if not os.path.exists(evaluate_dir):
+    os.makedirs(evaluate_dir)
+
 with open(os.path.join(evaluate_dir, "metrics.json"), "wt") as file:
     json.dump(json.loads(str(metrics).replace("'", '"')), file)
 
 for var in classifications:
-    dir = os.path.join(evaluate_dir, var)
-    if not os.path.exists(dir):
-        os.makedirs(dir)
+    directory = os.path.join(evaluate_dir, var)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
     y_pred = np.concatenate(y_preds[var])
-    show_confusion_matrix(labels[var].dropna().to_numpy().astype(int)[:len(y_pred)], y_pred, var+"\n", os.path.join(dir, "confusion_matrix.png"))
+    show_confusion_matrix(labels[var].dropna().to_numpy().astype(int)[:len(y_pred)], y_pred, var +"\n", os.path.join(directory, "confusion_matrix.png"))
 
 for var in regressions:
-    dir = os.path.join(evaluate_dir, var)
-    if not os.path.exists(dir):
-        os.makedirs(dir)
+    directory = os.path.join(evaluate_dir, var)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
     y_pred = np.concatenate(y_preds[var])
-    show_regression_2Dkde(labels[var].dropna().to_numpy().astype(float)[:len(y_pred)], y_pred, var+"\n", os.path.join(dir, "pred_grth_density.png"))
+    show_regression_2Dkde(labels[var].dropna().to_numpy().astype(float)[:len(y_pred)], y_pred, var +"\n", os.path.join(directory, "pred_grth_density.png"))

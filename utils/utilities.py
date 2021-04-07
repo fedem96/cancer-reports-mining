@@ -103,12 +103,15 @@ def show_confusion_matrix(y_true, y_pred, title=None, output_file=None):  # TODO
     import seaborn as sns
     df = pd.DataFrame({"true": y_true, "pred": y_pred})
     df = df.dropna()
-    try:
-        m = confusion_matrix(y_true, y_pred, labels=range(1+max(*y_true, *y_pred)))  # TODO: avoid nans
-    except:
-        m = confusion_matrix(y_true, y_pred)
     ax = sns.jointplot(data=df, x="pred", y="true", kind="hist", cmap="Blues",
                   joint_kws={"discrete": True}, marginal_kws={"discrete": True})
+    try:
+        ticks = range(1+max(*y_true, *y_pred))
+        m = confusion_matrix(y_true, y_pred, labels=ticks)  # TODO: avoid nans
+        ax.ax_joint.set_xticks(ticks)
+        ax.ax_joint.set_yticks(ticks)
+    except:
+        m = confusion_matrix(y_true, y_pred)
     _annotate_heatmap(ax.ax_joint, m)
     if title is not None:
         plt.title(title)
