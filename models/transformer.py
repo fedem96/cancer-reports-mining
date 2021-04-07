@@ -14,7 +14,7 @@ class Transformer(ModularBase):
         if net_seed is not None:
             torch.manual_seed(net_seed)
 
-        encoder_layers = nn.TransformerEncoderLayer(embedding_dim, num_heads, deep_features, dropout)
+        encoder_layers = nn.TransformerEncoderLayer(embedding_dim, num_heads, 128, dropout)
         modules = {
             "word_embedding": nn.Embedding(vocab_size, embedding_dim),
             "transformer_encoder": nn.TransformerEncoder(encoder_layers, n_layers)
