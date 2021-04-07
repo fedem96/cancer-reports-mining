@@ -123,14 +123,18 @@ for col in set(df.columns) - {"id_paz", "anno_diagnosi", "anno_referto", "id_ist
     assert sqldf("select ((count(distinct \"{}\") > 0) + (count(*) - count(\"{}\") > 0)) s from df group by id_paz having s>1".format(col, col)).sum().item() == 0
 
 print("splitting dataset into train, validation and test")
-patients = np.array(list(set(df['id_paz'].unique())))
-perm = np.random.permutation(len(patients))
-trainPatients = patients[perm][:17000]
-valPatients = patients[perm][17000:21000]
-testPatients = patients[perm][21000:]
-# testPatients = set(df[df['anno_diagnosi'] == 2015]['id_paz'].unique())
-# valPatients = set(df[df['anno_diagnosi'] == 2014]['id_paz'].unique()) - testPatients
-# trainPatients = set(df['id_paz'].unique()) - testPatients - valPatients
+# splits by year
+testPatients = set(df[df['anno_diagnosi'] == 2015]['id_paz'].unique())
+valPatients = set(df[df['anno_diagnosi'] == 2014]['id_paz'].unique()) - testPatients
+trainPatients = set(df['id_paz'].unique()) - testPatients - valPatients
+
+# # version with random splits
+# patients = np.array(list(set(df['id_paz'].unique())))
+# perm = np.random.permutation(len(patients))
+# trainPatients = set(patients[perm][:17000])
+# valPatients = set(patients[perm][17000:21000])
+# testPatients = set(patients[perm][21000:])
+
 assert len(valPatients.intersection(testPatients)) == 0
 assert len(valPatients.intersection(trainPatients)) == 0
 assert len(trainPatients.intersection(testPatients)) == 0
