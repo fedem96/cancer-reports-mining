@@ -5,7 +5,7 @@ from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 
 from callbacks.base_callback import Callback
 from metrics.accuracy import Accuracy
@@ -50,10 +50,6 @@ class ModularBase(nn.Module, ABC):
         self.train_stds = {}
         self.val_stds = {}
 
-        self.reduce_type = "data"
-        self.features_reducers = None
-        self.logits_reducer = None
-
         self.optimizer = None
 
         self.classification_metrics = ["Accuracy", "M-F1", "CKS", "DBCS"]
@@ -63,6 +59,9 @@ class ModularBase(nn.Module, ABC):
         self.reports_pooler = None
         self.predictions_pooler = {}
 
+        self.reports_processor = None
+        self.set_reports_transformation_method("identity")
+
     def encode_report(self, report):
         return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
 
@@ -70,7 +69,15 @@ class ModularBase(nn.Module, ABC):
         if pool_mode is None:
             print("set_tokens_pooling_method skipped: pool_mode is None")
         elif pool_mode == "max":
-            self.tokens_pooler = lambda x: x.max(dim=2, keepdim=True).values
+            def _max(x, explain=False):
+                x_max = x.max(dim=2, keepdim=True).values
+                tokens_importance = None
+                if explain:
+                    tokens_absolute_importance = (x == x_max).sum(dim=3)
+                    tokens_importance = tokens_absolute_importance.float() / tokens_absolute_importance.sum(dim=2, keepdim=True)
+                    tokens_importance[x.abs().sum(dim=3) == 0] = 0
+                return x_max, tokens_importance
+            self.tokens_pooler = _max
         else:
             raise ValueError("Unknown tokens pooling mode: " + pool_mode)
 
@@ -78,7 +85,16 @@ class ModularBase(nn.Module, ABC):
         if pool_mode is None:
             print("set_reports_pooling_method skipped: pool_mode is None")
         elif pool_mode == "max":
-            self.reports_pooler = lambda x: x.max(dim=1, keepdim=True).values
+            def _max(x, explain=False):
+                x_max = x.max(dim=1, keepdim=True).values
+                reports_importance = None
+                if explain:
+                    reports_absolute_importance = (x == x_max).sum(dim=3)
+                    reports_importance = reports_absolute_importance.float() / reports_absolute_importance.sum(dim=1, keepdim=True)
+                    reports_importance[x.abs().sum(dim=3) == 0] = 0
+                    reports_importance = reports_importance.squeeze(2)
+                return x_max, reports_importance
+            self.reports_pooler = _max
         else:
             raise ValueError("Unknown reports pooling mode: " + str(pool_mode))
 
@@ -89,6 +105,16 @@ class ModularBase(nn.Module, ABC):
             self.predictions_pooler[pool_args['var']] = lambda x: x.mean(dim=3, keepdim=True)
         else:
             raise ValueError("Unknown predictions pooling mode: " + pool_mode)
+
+    def set_reports_transformation_method(self, process_mode: str, **process_args):
+        if process_mode == "identity":
+            self.reports_processor = lambda x: x
+        elif process_mode == "transformer":
+            encoder_layer = nn.TransformerEncoderLayer(128, 2, 32, 0.1)
+            self.reports_processor_net = nn.TransformerEncoder(encoder_layer, 1).to(self.current_device())
+            self.reports_processor = lambda x: self.reports_processor_net(x.squeeze(2).permute(1, 0, 2), src_key_padding_mask=x.squeeze(2).abs().sum(dim=2) == 0).permute(1, 0, 2).unsqueeze(2)
+        else:
+            raise ValueError("Unknown reports processing mode: " + process_mode)
 
     def current_device(self):
         return next(self.parameters()).device
@@ -110,20 +136,28 @@ class ModularBase(nn.Module, ABC):
         return out.reshape((*x_orig_shape, -1))
 
     def forward(self, x, pool_tokens=True, pool_reports=True, pool_predictions=False, explain=False):
+        out = {}
         x_orig_shape = x.shape
         # x.shape: (num_records, num_reports, num_tokens)
         x, not_padded = self.pre_feature_extraction(x)
         # x.shape: (tot_non_padding_reports, num_tokens)
         features = self.extract_features(x)
-        # x.shape: (tot_non_padding_reports, num_tokens, num_features)
+        features[x == 0] = 0
+        # features.shape: (tot_non_padding_reports, num_tokens, num_features)
         features = self.post_feature_extraction(features, not_padded, x_orig_shape)
         # features.shape: (num_records, num_reports, num_tokens, num_features)
         if pool_tokens:
-            features = self.tokens_pooler(features)
+            features, tokens_importance = self.tokens_pooler(features, explain)
+            # features.shape: (num_records, num_reports, 1, num_features)
+            # tokens_importance.shape: (num_records, num_reports, num_tokens)
+            out.update({"tokens_importance": tokens_importance})
+            features = self.reports_processor(features)
             # features.shape: (num_records, num_reports, 1, num_features)
             if pool_reports:
-                features = self.reports_pooler(features)
+                features, reports_importance = self.reports_pooler(features, explain)
                 # features.shape: (num_records, 1, 1, num_features)
+                # reports_importance.shape: (num_records, num_reports)
+                out.update({"reports_importance": reports_importance})
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         # classifier(features).shape: (num_records, num_reports, num_tokens, num_classes)
         regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
@@ -131,7 +165,7 @@ class ModularBase(nn.Module, ABC):
         if pool_predictions:
             classes.update({var: self.predictions_pooler[var](classes[var]) for var in self.classifiers if var in self.predictions_pooler})
             regressions.update({var: self.predictions_pooler[var](regressions[var]) for var in self.regressors if var in self.predictions_pooler})
-        out = {"features": features, **classes, **regressions}
+        out.update({"features": features, **classes, **regressions})
         if explain:
             out.update({}) # TODO: finish
         return out
@@ -145,7 +179,7 @@ class ModularBase(nn.Module, ABC):
             classes_occurrences = train_labels[var].value_counts().sort_index().values
             self.num_classes[var] = len(classes_occurrences)
             assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
-            classes_weights = sum(classes_occurrences) / classes_occurrences
+            classes_weights = 1 / classes_occurrences
             classes_weights = torch.from_numpy(classes_weights).float().to(self.current_device())
             self.losses[var] = nn.CrossEntropyLoss(classes_weights)
             self.dumb_baseline_train_accuracy[var] = max(classes_occurrences) / sum(classes_occurrences)
@@ -278,7 +312,7 @@ class ModularBase(nn.Module, ABC):
             for metric_name in self.regression_metrics:
                 metrics[metric_name][var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
-        if "features" in forwarded and self.activation_penalty != 0:
+        if self.activation_penalty != 0:
             regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
             if training:
                 regularization_loss.backward()
@@ -334,33 +368,3 @@ class ModularBase(nn.Module, ABC):
         device = self.current_device()
         return torch.cat([p.grad.detach().flatten() if p.grad is not None else torch.zeros(p.shape, device=device).flatten() for p in self.parameters()])
 
-
-if __name__ == "__main__":
-    # this was an old version, it doesn't work anymore
-    def main():
-        import pandas as pd
-        # from models.emb_max_fc import EmbMaxLin
-        # model = EmbMaxLin(1021, 256, 256, 256)
-        from models.transformer import Transformer
-        model = Transformer(1021, 256, 8, 256, 256, 0.1)
-        model.add_classification("sede", 5)
-        model.add_classification("morfologia", 3)
-        model.add_classification("stadio", 5)
-        model.add_regression("dimensioni")
-
-        a = torch.randint(0, 1020, [35])
-        b = torch.randint(0, 1020, [40])
-        c = torch.randint(0, 1020, [12])
-        k = torch.randint(0, 1020, [17])
-        u = torch.randint(0, 1020, [4])
-        v = torch.randint(0, 1020, [21])
-        x = torch.randint(0, 1020, [12])
-        y = torch.randint(0, 1020, [7])
-        z = torch.randint(0, 1020, [20])
-        l = [a, b, c, k, u, v, x, y, z]
-        labels = pd.DataFrame([[3,None,3,17.5], [4,2,0,None], [3,1,2,17.5], [3,0,None,17.5], [4,0,4,None], [2,1,3,10.3], [0,1,1,0.4], [3,2,None,4.5], [1,0,4,2.1]], columns=["sede", "morfologia", "stadio", "dimensioni"])
-
-        model.fit(l, labels, 100, 2)
-        print("finish")
-
-    main()

@@ -14,7 +14,12 @@ class Preprocessor:
             text = text.replace(old, new)
         text = text.strip()
 
-        #text = re.sub("\s{2,}", " ", text) # remove double whitespaces
+        # remove RTF-originated characters
+        text = re.sub(r"\{\*?\\[^{}]+}|[{}]|\\\n?[A-Za-z]+\n?(?:-?\d+)?[ ]?", " ", text)
+        # TODO: not all RTF-originated characters are removed
+
+        text = re.sub("\s{2,}", " ", text)  # remove double whitespaces
+        text = re.sub("ï¿½", "", text)      # remove this corrupted character
 
         # change '\dx\d' with '\d x \d'
         new_text = ""

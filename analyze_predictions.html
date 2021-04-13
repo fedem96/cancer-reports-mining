@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Analyze predictions</title>
+    <script src="https://unpkg.com/vue@2.6.11"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <style>
+        .report textarea {
+          resize: none;
+          width: 100%;;
+          height: 15vh;
+        }
+        .row{
+            background-color: rgba(0,61,0,.15);
+            border: 1px solid rgba(0,61,0,.2);
+        }
+        .col{
+            background-color: rgba(86,61,124,.15);
+            border: 1px solid rgba(86,61,124,.2);
+        }
+        .report{
+            margin: 10px auto;
+        }
+        .tokens_importance{
+            background-color: white;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .token{
+            background-color: red;
+            margin: 2px 1px;
+            padding: 0px;
+            border-radius: 2px;
+        }
+        .token-inner{
+            padding: 1px 2px;
+            margin: 0px;
+        }
+        .token-inner:hover{
+            background-color: rgb(250, 250, 119);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <label for="predictionServer">Prediction Server</label>
+        <input id="predictionServer" v-model="predictionServerAddress" placeholder="IP:port">
+        <br>
+        <label for="dataServer">Data Server</label>
+        <input id="dataServer" v-model="dataServerAddress" placeholder="IP:port">
+        <br>
+        <label for="randomPatientBtn">Cartella di un paziente casuale</label>
+        <button id="randomPatientBtn" @click="fetchRecordOfRandomPatient">Ottieni</button>
+        <br>
+        <label for="specificPatientBtn">Cartella di un paziente preciso</label>
+        <input id="patientId" v-model="id_paz" placeholder="patient id">
+        <button id="specificPatientBtn" @click="fetchRecordOfPatient">Ottieni</button>
+        <br>{{dataset.dir}} {{dataset.set}}
+        <br>{{predictor.file}}
+        <!-- <line-chart :data="chartData" :options="chartOptions"></line-chart> -->
+        <div>
+            Paziente {{id_paz}}
+
+            <div class="container">
+                <div class="col">
+                    <div class="row">
+                        <div class="col">
+                            Classification variable
+                        </div>
+                        <div class="col">
+                            Ground truth
+                        </div>
+                        <div class="col">
+                            Prediction
+                        </div>
+                    </div>
+                    <div v-for="(classification, cVar) in classifications" class="row">
+                        <div class="col">
+                            {{cVar}}
+                        </div>
+                        <div class="col">
+                            {{classification.groundtruth}}
+                        </div>
+                        <div class="col">
+                            <bar-chart :data="classification.chartData" :options="classification.chartOptions" v-if="classification.chartData != null"></bar-chart>
+                        </div>
+                        
+                    </div>
+                </div>
+                <div class="col">
+                    Regressions
+                    <div v-for="regVar in regressions" class="row">
+                        {{regVar}}
+                    </div>
+
+                </div>
+            </div>
+
+            Referti
+            <div v-for="(report, index) in reports" class="container report">
+                <div class="row">
+                    referto {{index}} (importanza {{report.importance}}):
+                </div>
+                <div class="row">
+                    <div class="col">
+                        <div class="row">
+                            <div class="col-3">
+                                <label>diagnosi</label>
+                            </div>
+                            <div class="col">
+                                <textarea v-model="report.diagnosi"></textarea>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-3">
+                                <label>macroscopia</label>
+                            </div>
+                            <div class="col">
+                                <textarea v-model="report.macroscopia"></textarea>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-3">
+                                <label>notizie</label>
+                            </div>
+                            <div class="col">
+                                <textarea v-model="report.notizie"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        importanza parole
+                        <div class="tokens_importance">
+                            <span v-for="token in report.tokens" class="token" :style="token.style"  :title="token.importance">
+                                <span class="token-inner">{{token.text}}</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.7.1/Chart.min.js"></script>
+<script src="https://unpkg.com/vue-chartjs/dist/vue-chartjs.min.js"></script>
+
+<script type="text/javascript">
+
+    Vue.component('bar-chart', {
+        extends: VueChartJs.Bar,
+        props: {
+            data: {
+                type: Object,
+                default: null
+            },
+            options: {
+                type: Object,
+                default: null
+            }
+        },
+        mounted () {
+            this.renderChart(this.data, this.options);
+        }
+    })
+
+    const app = new Vue({
+        el: "#app",
+        data() {
+            return {
+                predictionServerAddress: '127.0.0.1:9836',
+                dataServerAddress: '127.0.0.1:6474',
+
+                dataset: {},
+                predictor: {},
+                reports: [],
+                id_paz: null,
+                classifications: {},
+                regressions: {}
+            }
+        },
+        mounted(){
+            this.fetchDatasetInfo();
+            this.fetchPredictorInfo();
+        },
+        methods: {
+            fetchDatasetInfo(){
+                fetch("http://" + this.dataServerAddress + "/info").then(response => response.json().then(data => this.setDatasetInfo(data.dataset, data.set)));
+            },
+            fetchPredictorInfo(){
+                fetch("http://" + this.predictionServerAddress + "/info").then(response => response.json().then(data => this.setPredictorInfo(data.model)));
+            },
+            fetchRecordOfRandomPatient() {
+                fetch("http://" + this.dataServerAddress + "/random").then(response => response.json().
+                    then(data => (this.setReports(data.reports, data.id_paz), this.setLabels(data.classifications_labels, data.regressions_labels))).then(t => this.fetchPredictions()));
+            },
+            fetchRecordOfPatient() {
+                fetch("http://" + this.dataServerAddress + "/patient/" + this.id_paz).then(response => response.json().
+                    then(data => (this.setReports(data.reports, data.id_paz), this.setLabels(data.classifications_labels, data.regressions_labels))).then(t => this.fetchPredictions()));
+            },
+            fetchPredictions() {
+                // let reports = this.reports.map(report => "report=" + report.diagnosi + " " + report.macroscopia + " " + report.notizie).join("&");
+                let data = {reports: this.reports.map(report => report.diagnosi + " " + report.macroscopia + " " + report.notizie)}
+                fetch("http://" + this.predictionServerAddress + "/predict", {
+                    method: 'POST', headers: { 'Content-Type': 'application/json'}, body: JSON.stringify(data)
+                }).then(response => response.json()).
+                    then(data => this.setPredictions(data.tokens, data.reports_importance, data.tokens_importance, data.classifications, data.regressions));
+            },
+            /*async fetchLabels(classificationsLabels, regressionsLabels){
+                let encodedClassificationLabels = {};
+                let encodedRegressionLabels = {};
+                for(let cVar in classificationsLabels){
+                    // fetch("http://" + this.predictionServerAddress + "/predict?variable=" + cVar + "&value=" + classificationsLabels[cVar]).then(response => response.json()).
+                    //     then(data => data.encoded_value);
+                    const response = await fetch("http://" + this.predictionServerAddress + "/predict?variable=" + cVar + "&value=" + classificationsLabels[cVar]);
+                    const json = await response.json();
+
+                }
+            },*/
+            setDatasetInfo(datasetDir, set){
+                this.dataset = {dir: datasetDir, set: set};
+            },
+            setPredictorInfo(modelFile){
+                this.predictor = {file: modelFile};
+            },
+            setReports(reports, id_paz=null) {
+                this.reports = reports;
+                this.id_paz = id_paz;
+            },
+            setLabels(classificationsLabels, regressionsLabels){
+                classifications = {};
+                regressions = {};
+                for(let cVar in classificationsLabels){
+                    classifications[cVar] = {
+                        groundtruth: classificationsLabels[cVar],
+                    }
+                }
+                for(let rVar in regressionsLabels){
+                    regressions[rVar] = {
+                        groundtruth: regressionsLabels[rVar]
+                    }
+                }
+                this.classifications = classifications;
+                this.regressions = regressions;
+
+            },
+            setPredictions(tokens, reportsImportance, tokensImportance, classificationsPredictions, regressionsPredictions) {
+                for (let i = 0; i < tokens.length; i++) {
+                    this.reports[i].importance = reportsImportance[0][i];
+                    let importanceMax = Math.max(...tokensImportance[0][i]);
+                    this.reports[i].tokens = tokens[i].map((token, j) => new Object({
+                        text: token.text,
+                        index: token.index,
+                        importance: tokensImportance[0][i][j],
+                        style: {
+                            backgroundColor: token.index !=0 ? this.getColor(tokensImportance[0][i][j]/importanceMax) : "#000000",
+                            color: token.index != 0 ? "#000000" : "#FFFFFF"
+                        }
+                    }));
+                }
+
+                for (let cVar in classificationsPredictions){
+                    this.classifications[cVar].predictions = classificationsPredictions[cVar];
+                    let predictedValue = null;
+                    let maxPredictionProb = -1;
+                    for (const value in classificationsPredictions[cVar]) {
+                        let prob = classificationsPredictions[cVar][value];
+                        if (prob > maxPredictionProb) {
+                            maxPredictionProb = prob;
+                            predictedValue = value;
+                        }
+                        let defaultBarColor = '#0288d1';
+                        let colorMax = defaultBarColor;
+                        // let colorMax = predictedValue == this.classifications[cVar].groundtruth ? "#388e3c" : "#d32f2f"; // TODO: handle colors
+                        classifications[cVar].chartData = {
+                            labels: Object.keys(classificationsPredictions[cVar]),
+                            datasets: [
+                                {
+                                    label: cVar,
+                                    backgroundColor: Object.keys(classificationsPredictions[cVar]).map(k => k == predictedValue ? colorMax : defaultBarColor),
+                                    data: Object.values(classificationsPredictions[cVar])
+                                }
+                            ]
+                        },
+                        classifications[cVar].chartOptions = {
+                            responsive: true,
+                            maintainAspectRatio: false
+                        }
+                    }
+                    this.classifications[cVar].predictedValue = predictedValue;
+                }
+
+                for (let rVar in regressionsPredictions){
+                    this.regressions[rVar].predictions = regressionsPredictions[rVar];
+                }
+
+                this.$forceUpdate();
+                return this;
+            },
+            getColor(value){
+                let startR = "FF", startG ="FF", startB = "FF";
+                let endR = "FF", endG ="99", endB = "99";
+                return "#" +
+                    Math.round(parseInt(startR, 16) * (1-value) + parseInt(endR, 16) * value).toString(16) +
+                    Math.round(parseInt(startG, 16) * (1-value) + parseInt(endG, 16) * value).toString(16) +
+                    Math.round(parseInt(startB, 16) * (1-value) + parseInt(endB, 16) * value).toString(16);
+            },
+            softmax(logits){
+                logits = logits.map(v => Math.exp(v));
+                let denominator = logits.reduce((a, b) => a + b, 0);
+                return logits.map(v => v/denominator);
+            }
+        }
+    });
+    // const app = Vue.createApp(PredictionClient);
+    // app.mount('#app');
+
+    // new Vue({
+    //     render: h => h(PredictionClient),
+    // }).$mount('#app')
+</script>
+<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" crossorigin="anonymous"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js" integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl" crossorigin="anonymous"></script>
+
+</html>

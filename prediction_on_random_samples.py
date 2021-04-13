@@ -60,7 +60,7 @@ while True:
     print("\nrandom index: {}".format(index))
     encoded_record = torch.tensor(data[index].astype(np.int16)).unsqueeze(0)
     record_labels = labels.loc[index]
-    out = model(encoded_record)
+    out = model(encoded_record, explain=True)
     record = list(merge_and_extract(dataset.dataframe[index], input_cols))
     print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
@@ -74,15 +74,19 @@ while True:
             print("groundtruth: {}, groundtruth index: {}".format(grth, grth_idx))
         else:
             print("no groundtruth available")
-        if 'all_features' in out:  # TODO: make compatible with new source code
-            record_features = out['all_features'][0] # [0] because we want the first (and only) record of the batch
-            for idx_fr, fr in enumerate(model.features_reducers):
-                num_equals = [(fr(record_features, dim=0) == record_features[i]).sum().item() for i in range(len(record))]
-                if sum(num_equals) == 0:
-                    print("this reduce method does not support insights on importance of reports")
-                else:
-                    print("importance of reports: {}".format(num_equals))
-                    print("most important report: {}".format(np.argmax(num_equals)))
+        if 'reports_importance' in out:
+            reports_importance = out['reports_importance'][0][:len(record)]
+            print("importance of reports: {}".format(reports_importance))
+            print("most important report (0-based index): {}".format(np.argmax(reports_importance)))
+            if 'tokens_importance' in out:
+                tokens_importance = out['tokens_importance'][0][:len(record)]
+                for i, report in enumerate(record):
+                    report_tokens_str = model.tokenizer.tokenize(model.preprocessor.preprocess(report))
+                    print("report {}".format(i))
+                    print(list(zip(report_tokens_str, tokens_importance[i].cpu().numpy())))
+                    print()
+            else:
+                print("this model does not support insights on importance of tokens")
         else:
             print("this model does not support insights on importance of reports")
         print()

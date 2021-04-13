@@ -33,7 +33,7 @@ parser.add_argument("-gb", "--group-by",
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-ic", "--input-cols", help="Inverse Document Frequencies filename", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
-parser.add_argument("-lt", "--label-transformations", help="how to transform the labels", default={}, type=json.loads)
+parser.add_argument("-lp", "--labels-preprocessing", help="how to preprocess the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
@@ -43,6 +43,8 @@ parser.add_argument("-n", "--name", help="name to use when saving the model", de
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
 parser.add_argument("-pr", "--pool-reports", help="whether (and how) to pool reports (i.e. aggregate features of reports in the same record)", default=None, type=str, choices=["max"])
 parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"], required=True)
+parser.add_argument("-rt", "--reports-transformation", help="how to transform reports (i.e. how to obtain a deep representation of the reports)", default="identity", choices=["identity", "transformer"])
+parser.add_argument("-rta", "--reports-transformation-args", help="args for report transformation", default={}, type=json.loads)
 parser.add_argument("-tc", "--train-classifications", help="list of classifications", default=[], nargs="+", type=str)
 parser.add_argument("-tr", "--train-regressions", help="list of regressions", default=[], nargs="+", type=str)
 args = parser.parse_args()
@@ -58,7 +60,7 @@ DATA_COL = "encoded_data"
 with Chronostep("reading input"):
 
     classifications, regressions = args.train_classifications, args.train_regressions
-    transformations = args.label_transformations
+    transformations = args.labels_preprocessing
 
 with Chronostep("encoding reports"):
     sets = {"train": Dataset(os.path.join(args.dataset_dir, TRAINING_SET)), "val": Dataset(os.path.join(args.dataset_dir, VALIDATION_SET))}
@@ -140,6 +142,7 @@ with Chronostep("creating model"):
     model = Model(**model_args)
     model = to_gpu_if_available(model)
     model.set_tokens_pooling_method(args.pool_tokens)
+    model.set_reports_transformation_method(args.reports_transformation)
     model.set_reports_pooling_method(args.pool_reports)
 
     for cls_var in classifications:
@@ -173,12 +176,12 @@ if args.data_seed is not None:
 tb_dir = os.path.join(model_dir, "logs")
 callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),
              ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True),
-             EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)]
+             #EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)
+            ]
 
 with Chronostep("training"):
     model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation_labels, info, callbacks, **hyperparameters)
 
-# TODO: add transformations
 # TODO: clean code and apis
 # TODO: speedup script
 # TODO: experiment
