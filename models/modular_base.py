@@ -110,7 +110,7 @@ class ModularBase(nn.Module, ABC):
         if process_mode == "identity":
             self.reports_processor = lambda x: x
         elif process_mode == "transformer":
-            encoder_layer = nn.TransformerEncoderLayer(128, 2, 32, 0.1)
+            encoder_layer = nn.TransformerEncoderLayer(**transformation_args)
             self.reports_processor_net = nn.TransformerEncoder(encoder_layer, 1).to(self.current_device())
             self.reports_processor = lambda x: self.reports_processor_net(x.squeeze(2).permute(1, 0, 2), src_key_padding_mask=x.squeeze(2).abs().sum(dim=2) == 0).permute(1, 0, 2).unsqueeze(2)
         else:
@@ -332,8 +332,6 @@ class ModularBase(nn.Module, ABC):
             nn.Dropout(dropout).to(self.current_device()),
             nn.Linear(self.deep_features, num_classes).to(self.current_device())
         )
-        for param in self.classifiers[task_name].parameters():
-            param.requires_grad = False
 
     def add_regression(self, task_name, dropout):
         self.regressors[task_name] = nn.Sequential(

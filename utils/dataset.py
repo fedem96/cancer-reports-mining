@@ -136,7 +136,7 @@ class Dataset:
     def get_data(self, column_name):
         # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
         if type(self.dataframe) == list:
-            reports_lengths = [[len(report) for report in record[column_name].values] for record in self.dataframe]
+            reports_lengths = [[len(report.astype(np.uint16)[report.astype(np.uint16) != 0]) for report in record[column_name].values] for record in self.dataframe]
             records_sizes = [len(record) for record in self.dataframe]
             max_report_length = max([max(lengths) for lengths in reports_lengths])
             max_record_size = max(records_sizes)
@@ -144,10 +144,11 @@ class Dataset:
                 [
                     np.pad(                                                                         # pad record
                             np.stack([                                                              # stack reports to create record
-                                np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) # pad report
+                                np.pad(report.astype(np.uint16)[report.astype(np.uint16) != 0], (0,max_report_length))[:max_report_length] # pad report
                                 for report in record[column_name].values
+                                if (report.astype(np.uint16) != 0).sum() > 0
                             ]
-                        ), ((0,max_record_size-len(record)),(0,0)))
+                        ), ((0,max_record_size),(0,0)))[:max_record_size]
                     for record in self.dataframe
                 ]
             )
