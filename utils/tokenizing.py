@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 
 import numpy as np
 import spacy
@@ -22,9 +23,10 @@ class Tokenizer:
 
 class TokenCodec:
 
-    def __init__(self, encoder={}, decoder={}):
+    def __init__(self, encoder={}, decoder={}, occurrences={}):
         self.encoder = encoder
         self.decoder = decoder
+        self.occurrences = occurrences
         assert len(self.encoder) == len(self.decoder)
 
     def load(self, filename):
@@ -69,15 +71,17 @@ class TokenCodecCreator:
         self.preprocessor = preprocessor
         self.tokenizer = Tokenizer(tokenizer)
 
-    def create_codec(self, texts):
+    def create_codec(self, texts, min_occurrences=0):
         encoder = {}
         decoder = {}
         count = 0
         tokens_batch = self.tokenizer.tokenize_batch(self.preprocessor.preprocess_batch(texts))
+        occurrences = defaultdict(lambda: 0)
         for tokens in tokens_batch:
             for token in tokens:
-                if token not in encoder:
+                occurrences[token] += 1
+                if occurrences[token] >= min_occurrences and token not in encoder:
                     count += 1
                     encoder[token] = count
                     decoder[count] = token
-        return TokenCodec(encoder, decoder)
+        return TokenCodec(encoder, decoder, occurrences)

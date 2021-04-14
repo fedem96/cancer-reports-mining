@@ -182,7 +182,7 @@ print("generating codec")
 # training_set = pd.read_csv(os.path.join(args.dataset_dir, TRAINING_SET), usecols=cols)
 replace_nulls(dfTrain, {col: "" for col in input_cols})
 texts = merge_and_extract(dfTrain, input_cols)
-TokenCodecCreator().create_codec(texts).save(os.path.join(args.dataset_dir, args.codec))
+TokenCodecCreator().create_codec(texts, min_occurrences=3).save(os.path.join(args.dataset_dir, args.codec))
 
 print("generating idf")
 InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))

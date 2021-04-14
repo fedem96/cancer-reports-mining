@@ -106,7 +106,7 @@ class ModularBase(nn.Module, ABC):
         else:
             raise ValueError("Unknown predictions pooling mode: " + pool_mode)
 
-    def set_reports_transformation_method(self, process_mode: str, **process_args):
+    def set_reports_transformation_method(self, process_mode: str, **transformation_args):
         if process_mode == "identity":
             self.reports_processor = lambda x: x
         elif process_mode == "transformer":
@@ -158,6 +158,7 @@ class ModularBase(nn.Module, ABC):
                 # features.shape: (num_records, 1, 1, num_features)
                 # reports_importance.shape: (num_records, num_reports)
                 out.update({"reports_importance": reports_importance})
+        # features /= features.norm(dim=3)
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         # classifier(features).shape: (num_records, num_reports, num_tokens, num_classes)
         regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
@@ -202,6 +203,8 @@ class ModularBase(nn.Module, ABC):
 
             batch_size = hyperparams["batch_size"]
             self.activation_penalty = hyperparams["activation_penalty"]
+            self.classifiers_l2_penalty = hyperparams["classifiers_l2_penalty"]
+            self.regressors_l2_penalty = hyperparams["regressors_l2_penalty"]
 
             train_data = torch.tensor(train_data.astype(np.int16), device=self.current_device())
             val_data = torch.tensor(val_data.astype(np.int16), device=self.current_device())
@@ -274,6 +277,8 @@ class ModularBase(nn.Module, ABC):
             preds = forwarded[var][mask].squeeze(2).squeeze(1) # TODO: mask indexing is slow
             grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
             loss = self.losses[var](preds, grth) / len(grth)
+            if self.classifiers_l2_penalty > 0:
+                loss += self.classifiers_l2_penalty * sum(p.norm() for p in self.classifiers[var].parameters())
             losses[var] = loss.detach().item()
 
             if training:
@@ -298,6 +303,8 @@ class ModularBase(nn.Module, ABC):
             preds = forwarded[var][mask].squeeze(3).squeeze(2).squeeze(1)
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
             loss = self.losses[var](preds, grth) / len(grth)
+            if self.regressors_l2_penalty > 0:
+                loss += self.regressors_l2_penalty * sum(p.norm() for p in self.regressors[var].parameters())
             losses[var] = loss.detach().item()
 
             if training:
@@ -320,11 +327,17 @@ class ModularBase(nn.Module, ABC):
                 gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
                 gradient_norms["features_regularization_l1"] = gradient_norm
 
-    def add_classification(self, task_name, num_classes):
-        self.classifiers[task_name] = nn.Linear(self.deep_features, num_classes).to(self.current_device())
+    def add_classification(self, task_name, num_classes, dropout):
+        self.classifiers[task_name] = nn.Sequential(
+            nn.Dropout(dropout).to(self.current_device()),
+            nn.Linear(self.deep_features, num_classes).to(self.current_device())
+        )
+        for param in self.classifiers[task_name].parameters():
+            param.requires_grad = False
 
-    def add_regression(self, task_name):
+    def add_regression(self, task_name, dropout):
         self.regressors[task_name] = nn.Sequential(
+            nn.Dropout(dropout).to(self.current_device()),
             nn.Linear(self.deep_features, 1).to(self.current_device()),
             nn.Sigmoid()
         )

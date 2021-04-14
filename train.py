@@ -17,6 +17,8 @@ parser = argparse.ArgumentParser(description='Train a model')
 parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0, type=float)
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=128, type=int)
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
+parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each classifier", default=0, type=float)
+parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
 parser.add_argument("-cr", "--concatenate-reports", help="whether to concatenate reports of the same record before training", default=False, action='store_true')
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
@@ -43,6 +45,8 @@ parser.add_argument("-n", "--name", help="name to use when saving the model", de
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
 parser.add_argument("-pr", "--pool-reports", help="whether (and how) to pool reports (i.e. aggregate features of reports in the same record)", default=None, type=str, choices=["max"])
 parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"], required=True)
+parser.add_argument("-rd", "--regressors-dropout", help="dropout before each regressor", default=0, type=float)
+parser.add_argument("-rl2p", "--regressors-l2-penalty", help="l2 penalty for each regressor", default=0, type=float)
 parser.add_argument("-rt", "--reports-transformation", help="how to transform reports (i.e. how to obtain a deep representation of the reports)", default="identity", choices=["identity", "transformer"])
 parser.add_argument("-rta", "--reports-transformation-args", help="args for report transformation", default={}, type=json.loads)
 parser.add_argument("-tc", "--train-classifications", help="list of classifications", default=[], nargs="+", type=str)
@@ -142,24 +146,29 @@ with Chronostep("creating model"):
     model = Model(**model_args)
     model = to_gpu_if_available(model)
     model.set_tokens_pooling_method(args.pool_tokens)
-    model.set_reports_transformation_method(args.reports_transformation)
+    model.set_reports_transformation_method(args.reports_transformation, **args.reports_transformation_args)
     model.set_reports_pooling_method(args.pool_reports)
 
     for cls_var in classifications:
-        model.add_classification(cls_var, training.nunique(cls_var))
+        model.add_classification(cls_var, training.nunique(cls_var), args.classifiers_dropout)
 
     for reg_var in regressions:
-        model.add_regression(reg_var)
+        model.add_regression(reg_var, args.regressors_dropout)
 
 print("created model: " + model_name)
 print("model device:", model.current_device())
 
 print("parameters:", sum([p.numel() for p in model.parameters()]))
+# for parameter_name, parameter in model.named_parameters():
+#     if "classifier" in parameter_name:
+#         parameter.requires_grad = False
 for parameter_name, parameter in model.named_parameters():
-    print("\t{}: {}".format(parameter_name, parameter.numel()))
+    print("\t{}: {}, trainable: {}".format(parameter_name, parameter.numel(), parameter.requires_grad))
 
-hyperparameters = {"learning_rate": args.learning_rate, "activation_penalty": args.activation_penalty,
-                   "max_epochs": args.epochs, "batch_size": args.batch_size}
+hyperparameters = {
+    "batch_size": args.batch_size, "learning_rate": args.learning_rate, "max_epochs": args.epochs,
+    "activation_penalty": args.activation_penalty, "classifiers_l2_penalty": args.classifiers_l2_penalty, "regressors_l2_penalty": args.regressors_l2_penalty
+}
 with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)
 
