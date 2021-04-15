@@ -1,26 +1,32 @@
+import os
 import pickle
 import sys
-from multiprocessing import Pool
+from ray.experimental.multiprocessing.pool import Pool
 
 import numpy as np
 import pandas as pd
 import torch
 
 from utils.cache import caching
+from utils.constants import *
+from utils.idf import InverseFrequenciesCounter
 from utils.labels_codec import LabelsCodecFactory
+from utils.preprocessing import Preprocessor
 from utils.serialization import load
+from utils.tokenizing import Tokenizer, TokenCodec
 from utils.utilities import replace_nulls, merge_and_extract, to_gpu_if_available
 
 
 class Dataset:
 
-    def __init__(self, csv_file):
-        self.csv_file = csv_file
-        self.dataframe = pd.read_csv(csv_file)
+    def __init__(self, directory, set_name, input_cols, token_codec_file_name=TOKEN_CODEC, idf_file_name=IDF, max_report_length=None):
+        self.directory = directory
+        self.set_name = set_name
+        self.csv_file = os.path.join(directory, set_name)
+        self.dataframe = pd.read_csv(self.csv_file)
         self.dataframe.columns = self.dataframe.columns.str.replace('_%', '')
-        self.input_cols = []
+        self.input_cols = input_cols
         self.encoded_input_cols = []
-        self.full_pipe = None
         self.classifications = []
         self.regressions = []
         self.transformations = None
@@ -36,25 +42,23 @@ class Dataset:
         self.max_total_length = None
         self.encoded_data_column = None
 
-    def set_input_cols(self, input_cols):
-        self.input_cols = input_cols
-        replace_nulls(self.dataframe, {col: "" for col in input_cols})
+        self.preprocessor = Preprocessor.get_default()
+        self.tokenizer = Tokenizer()
+        self.token_codec = TokenCodec().load(os.path.join(directory, token_codec_file_name))
+        self.idf = InverseFrequenciesCounter().load(os.path.join(directory, idf_file_name))
 
-    def set_encoded_data_column(self, column_name):
-        if type(self.dataframe) == list:
-            raise Exception("cannot execute operation: dataframe is already grouped")
-        if column_name not in self.dataframe.columns:
-            raise Exception("column '{}' does not exists".format(column_name))
-        if self.encoded_data_column is not None:
-            raise Exception("encoded data column already exists")
-        self.encoded_data_column = column_name
+        self.max_report_length = max_report_length
+        self.encoded_data_column = "encoded_data"
+        replace_nulls(self.dataframe, {col: "" for col in input_cols})
+        # self.add_encoded_column(self.full_pipe, self.encoded_data_column, max_report_length)
+
+    def full_pipe(self, report):
+        return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
 
     def add_encoded_column(self, full_pipe, new_column_name, max_length=None):
 
         if len(self.input_cols) == 0:
             raise Exception("input columns not set")
-
-        self.full_pipe = full_pipe
 
         def _df_to_data(dataframe, pipeline, cols):
             if type(dataframe) == list:
@@ -64,8 +68,8 @@ class Dataset:
 
             try:
                 with Pool(6) as pool:
-                    data = pool.map(pipeline, reports)  # since pipeline is going to be pickled, I can't use a lambda
-            except pickle.PicklingError:
+                    data = pool.map(pipeline, reports, chunksize=len(reports)//6)  # since pipeline is going to be pickled, I can't use a lambda
+            except (pickle.PicklingError, RuntimeError):
                 print("Cannot pickle pipeline, using sequential version", file=sys.stderr)
                 data = [pipeline(r) for r in reports]
             return data
@@ -126,36 +130,72 @@ class Dataset:
 
     # TODO: very slow, speedup
     def get_labels(self):
-        if type(self.dataframe) == list:
-            cols = self.get_labels_columns()
-            tmp = [df.loc[:,cols] for df in self.dataframe]
-            l = [t.head(1) for t in tmp]
-            return pd.concat(l)
-        return self.dataframe[self.get_labels_columns()]
+        def _get_labels(dataframe, labels_columns):
+            if type(dataframe) == list:
+                cols = labels_columns
+                tmp = [df.loc[:,cols] for df in dataframe]
+                l = [t.head(1) for t in tmp]
+                return pd.concat(l)
+            return self.dataframe[labels_columns]
+        return caching(_get_labels)(self.dataframe, self.get_labels_columns())
 
-    def get_data(self, column_name):
-        # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
-        if type(self.dataframe) == list:
-            reports_lengths = [[len(report.astype(np.uint16)[report.astype(np.uint16) != 0]) for report in record[column_name].values] for record in self.dataframe]
-            records_sizes = [len(record) for record in self.dataframe]
-            max_report_length = max([max(lengths) for lengths in reports_lengths])
-            max_record_size = max(records_sizes)
-            data = np.stack(                                                                        # stack records to create dataset
-                [
-                    np.pad(                                                                         # pad record
-                            np.stack([                                                              # stack reports to create record
-                                np.pad(report.astype(np.uint16)[report.astype(np.uint16) != 0], (0,max_report_length))[:max_report_length] # pad report
-                                for report in record[column_name].values
-                                if (report.astype(np.uint16) != 0).sum() > 0
-                            ]
-                        ), ((0,max_record_size),(0,0)))[:max_record_size]
-                    for record in self.dataframe
-                ]
-            )
-            return data # data.shape: (num_records, num_reports, num_tokens)
-        # without group by, each row is treated as a single-report record
-        max_report_length = max([len(report) for report in self.dataframe[column_name].values])
-        return np.expand_dims(np.stack([np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) for report in self.dataframe[column_name].values]), 1)
+    def get_data(self, data_type="indices", column_name=None):
+        if column_name is None:
+            column_name = self.encoded_data_column
+        if data_type == "indices":
+            return self.get_data_as_tokens_indices(column_name)
+        elif data_type == "tfidf":
+            return self.get_data_as_tfidf_vectors(column_name)
+        return "unknown data type: '{}'".format(data_type)
+
+    def get_data_as_tokens_indices(self, column_name):
+        def _get_data_as_tokens_indices(dataframe, col_name, function_name):  # function_name is required for caching
+            # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
+            if type(dataframe) == list:
+                reports_lengths = [[len(report.astype(np.uint16)[report.astype(np.uint16) != 0]) for report in record[col_name].values] for record in dataframe]
+                records_sizes = [len(record) for record in dataframe]
+                max_report_length = max([max(lengths) for lengths in reports_lengths])
+                max_record_size = max(records_sizes)
+                data = np.stack(                                                                        # stack records to create dataset
+                    [
+                        np.pad(                                                                         # pad record
+                                np.stack([                                                              # stack reports to create record
+                                    np.pad(report.astype(np.uint16)[report.astype(np.uint16) != 0], (0,max_report_length))[:max_report_length] # pad report
+                                    for report in record[col_name].values
+                                    if (report.astype(np.uint16) != 0).sum() > 0
+                                ]
+                            ), ((0,max_record_size),(0,0)))[:max_record_size]
+                        for record in dataframe
+                    ]
+                )
+                return data # data.shape: (num_records, num_reports, num_tokens)
+            # without group by, each row is treated as a single-report record
+            max_report_length = max([len(report) for report in dataframe[col_name].values])
+            return np.expand_dims(np.stack([np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) for report in self.dataframe[col_name].values]), 1)
+        return caching(_get_data_as_tokens_indices)(self.dataframe, column_name, "get_data_as_tokens_indices")
+
+    def get_data_as_tfidf_vectors(self, column_name):
+        def _get_data_as_tfidf_vectors(dataframe, col_name, function_name): # dataframe and function_name are required for caching
+            indices_data = self.get_data_as_tokens_indices(col_name)
+
+            records_indexes = []
+            reports_indexes = []
+            tokens_indexes = []
+            tokens_values = []
+            for record_index, encoded_record in enumerate(indices_data):
+                non_padding_reports = encoded_record.sum(axis=1) != 0
+                record = self.token_codec.decode_ndarray(encoded_record[non_padding_reports])
+                for report_non_padding_index, report_original_index in enumerate(np.where(non_padding_reports)[0]):
+                    report = record[report_non_padding_index]
+                    for token in report:
+                        if token != "":
+                            records_indexes.append(record_index)
+                            reports_indexes.append(report_original_index.item())
+                            tokens_indexes.append(self.token_codec.encode_token(token))
+                            tokens_values.append(self.idf.get_idf(token))
+            indexes = [records_indexes, reports_indexes, tokens_indexes]
+            return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.token_codec.num_tokens()+1))
+        return caching(_get_data_as_tfidf_vectors)(self.dataframe, column_name, "get_data_as_tfidf_vectors")
 
     def group_by(self, attributes):
 

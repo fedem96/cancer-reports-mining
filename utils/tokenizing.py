@@ -27,6 +27,7 @@ class TokenCodec:
         self.encoder = encoder
         self.decoder = decoder
         self.occurrences = occurrences
+        self.tokens_str_ndarray = np.array([""] + list(self.decoder.values()))
         assert len(self.encoder) == len(self.decoder)
 
     def load(self, filename):
@@ -35,12 +36,14 @@ class TokenCodec:
         self.encoder = js["encoder"]
         decoder = js["decoder"]
         self.decoder = {int(k): v for k, v in decoder.items()}
+        self.occurrences = js["occurrences"]
+        self.tokens_str_ndarray = np.array([""] + list(decoder.values()))
         assert len(self.encoder) == len(self.decoder)
         return self
 
     def save(self, filename):
         with open(filename, "wt") as file:
-            json.dump({"encoder": self.encoder, "decoder": self.decoder}, file)
+            json.dump({"encoder": self.encoder, "decoder": self.decoder, "occurrences": self.occurrences}, file)
         return self
 
     def encode_token(self, token):
@@ -60,6 +63,9 @@ class TokenCodec:
 
     def decode_batch(self, tokens_idxs_group):
         return [self.decode(tokens_idxs) for tokens_idxs in tokens_idxs_group]
+
+    def decode_ndarray(self, tokens):
+        return self.tokens_str_ndarray[tokens]
 
     def num_tokens(self):
         return len(self.encoder)

@@ -32,7 +32,7 @@ class Preprocessor:
         new_text += text
 
         # TODO: handle numeric strings?
-        return new_text
+        return new_text.strip()
 
     def preprocess_batch(self, texts):
         prep = self.preprocess

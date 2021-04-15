@@ -10,6 +10,7 @@ from pandasql import sqldf
 
 from utils.constants import *
 from utils.idf import InverseFrequenciesCounter
+from utils.preprocessing import Preprocessor
 from utils.tokenizing import TokenCodecCreator
 from utils.utilities import *
 
@@ -19,6 +20,7 @@ parser.add_argument("-c", "--codec", help="filename where to save the token code
 parser.add_argument("-i", "--idf", help="filename where to save Inverse Document Frequencies", default=IDF, type=str)
 parser.add_argument("-s", "--stats", help="subdirectory where to save the statistics", default=STATS, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
+parser.add_argument("-q", "--quick", help="skip unnecessary checks", default=False, action='store_true')
 parser.add_argument("-r", "--raw-csv", help="raw csv file to process", default=NEW_DATA_FILE, type=str)
 args = parser.parse_args()
 
@@ -113,14 +115,17 @@ df.drop(df[(df["diagnosi"] == "") & (df["macroscopia"] == "") & (df["notizie"] =
 print("solving ambiguities")
 df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False) # TODO
 
-print("asserting data validity")
-assert sqldf("select count(*) from df group by id_isto having count(*) > 1").sum().item() == 0
-for column in ["recettori_estrogeni_%", "recettori_progestin_%", "mib1", "cerb", "ki67"]:
-    # a percentage can't be smaller than 0 or greater than 100
-    assert df[column].min() >= 0 and df[column].max() <= 100
-for col in set(df.columns) - {"id_paz", "anno_diagnosi", "anno_referto", "id_isto", "notizie", "macroscopia", "diagnosi"}:
-    # assure that each patient has no columns with multiple values
-    assert sqldf("select ((count(distinct \"{}\") > 0) + (count(*) - count(\"{}\") > 0)) s from df group by id_paz having s>1".format(col, col)).sum().item() == 0
+if args.quick:
+    print("quick flag enabled: skipping checks on data validity")
+else:
+    print("asserting data validity")
+    assert sqldf("select count(*) from df group by id_isto having count(*) > 1").sum().item() == 0
+    for column in ["recettori_estrogeni_%", "recettori_progestin_%", "mib1", "cerb", "ki67"]:
+        # a percentage can't be smaller than 0 or greater than 100
+        assert df[column].min() >= 0 and df[column].max() <= 100
+    for col in set(df.columns) - {"id_paz", "anno_diagnosi", "anno_referto", "id_isto", "notizie", "macroscopia", "diagnosi"}:
+        # assure that each patient has no columns with multiple values
+        assert sqldf("select ((count(distinct \"{}\") > 0) + (count(*) - count(\"{}\") > 0)) s from df group by id_paz having s>1".format(col, col)).sum().item() == 0
 
 print("splitting dataset into train, validation and test")
 # splits by year
@@ -150,6 +155,26 @@ dfTest = df[df['id_paz'].isin(testPatients)].copy()
 # validation:  3783 patients (15.02%) with at least one report in 2014 (but not in 2015)           18994 reports
 # test:        3836 patients (15.23%) with at least one report in 2015                             19009 reports
 
+print("generating codec")
+replace_nulls(dfTrain, {col: "" for col in input_cols})
+texts = merge_and_extract(dfTrain, input_cols)
+tc = TokenCodecCreator().create_codec(texts, min_occurrences=100)
+tc.save(os.path.join(args.dataset_dir, args.codec))
+
+print("generating idf")
+InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))
+
+print("removing rows with no tokens")
+p = Preprocessor.get_default()
+replace_nulls(dfVal, {col: "" for col in input_cols})
+replace_nulls(dfTest, {col: "" for col in input_cols})
+dfTrain = dfTrain.reset_index(drop=True)
+dfVal = dfVal.reset_index(drop=True)
+dfTest = dfTest.reset_index(drop=True)
+dfTrain.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(texts)]))[0], inplace=True)
+dfVal.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(merge_and_extract(dfVal, input_cols))]))[0], inplace=True)
+dfTest.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(merge_and_extract(dfTest, input_cols))]))[0], inplace=True)
+
 print("saving cleaned csv")
 if not os.path.exists(args.dataset_dir): os.makedirs(args.dataset_dir)
 dfTrain.to_csv(os.path.join(args.dataset_dir, TRAINING_SET), index=False)
@@ -177,14 +202,5 @@ for dataframe, images_dir in zip(dataframes, images_dirs):
 
     with open(os.path.join(images_dir, "stats.json"), 'w') as outfile:
         json.dump({"num_rows": len(dataframe), "not_null": {k: int(v) for k,v in dict(dataframe.notnull().sum()).items()}}, outfile, indent=2)
-
-print("generating codec")
-# training_set = pd.read_csv(os.path.join(args.dataset_dir, TRAINING_SET), usecols=cols)
-replace_nulls(dfTrain, {col: "" for col in input_cols})
-texts = merge_and_extract(dfTrain, input_cols)
-TokenCodecCreator().create_codec(texts, min_occurrences=3).save(os.path.join(args.dataset_dir, args.codec))
-
-print("generating idf")
-InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))
 
 print("done")

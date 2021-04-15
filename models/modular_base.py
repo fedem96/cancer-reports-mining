@@ -121,8 +121,9 @@ class ModularBase(nn.Module, ABC):
 
     def pre_feature_extraction(self, x):
         x = x.flatten(start_dim=0, end_dim=1)
-        x = x.long()
-        x[x < 0] += 65536
+        if x.dtype == torch.int16:
+            x = x.long()
+            x[x < 0] += 65536
         not_padded = (x.sum(axis=1) != 0)
         return x[not_padded], not_padded
 
@@ -131,9 +132,9 @@ class ModularBase(nn.Module, ABC):
         pass
 
     def post_feature_extraction(self, x, not_padded, x_orig_shape):
-        out = torch.zeros((len(not_padded), x_orig_shape[2], x.shape[-1]), device=self.current_device())
+        out = torch.zeros((len(not_padded), x.shape[1], x.shape[-1]), device=self.current_device())
         out[not_padded] = x
-        return out.reshape((*x_orig_shape, -1))
+        return out.reshape((*x_orig_shape[:2], *x.shape[-2:]))
 
     def forward(self, x, pool_tokens=True, pool_reports=True, pool_predictions=False, explain=False):
         out = {}
@@ -142,7 +143,7 @@ class ModularBase(nn.Module, ABC):
         x, not_padded = self.pre_feature_extraction(x)
         # x.shape: (tot_non_padding_reports, num_tokens)
         features = self.extract_features(x)
-        features[x == 0] = 0
+        features[(x != 0).sum(axis=1) == 0] = 0
         # features.shape: (tot_non_padding_reports, num_tokens, num_features)
         features = self.post_feature_extraction(features, not_padded, x_orig_shape)
         # features.shape: (num_records, num_reports, num_tokens, num_features)
@@ -153,11 +154,11 @@ class ModularBase(nn.Module, ABC):
             out.update({"tokens_importance": tokens_importance})
             features = self.reports_processor(features)
             # features.shape: (num_records, num_reports, 1, num_features)
-            if pool_reports:
-                features, reports_importance = self.reports_pooler(features, explain)
-                # features.shape: (num_records, 1, 1, num_features)
-                # reports_importance.shape: (num_records, num_reports)
-                out.update({"reports_importance": reports_importance})
+        if pool_reports:
+            features, reports_importance = self.reports_pooler(features, explain)
+            # features.shape: (num_records, 1, 1, num_features)
+            # reports_importance.shape: (num_records, num_reports)
+            out.update({"reports_importance": reports_importance})
         # features /= features.norm(dim=3)
         classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
         # classifier(features).shape: (num_records, num_reports, num_tokens, num_classes)
@@ -206,9 +207,15 @@ class ModularBase(nn.Module, ABC):
             self.classifiers_l2_penalty = hyperparams["classifiers_l2_penalty"]
             self.regressors_l2_penalty = hyperparams["regressors_l2_penalty"]
 
-            train_data = torch.tensor(train_data.astype(np.int16), device=self.current_device())
-            val_data = torch.tensor(val_data.astype(np.int16), device=self.current_device())
-            # torch does not have uint16 dtype: be aware that indices >= 32768 will be stored as negative numbers
+            if not torch.is_tensor(train_data):
+                train_data = torch.tensor(train_data.astype(np.int16), device=self.current_device())
+                # torch does not have uint16 dtype: be aware that indices in range [32768,65535] will be stored as negative numbers
+            else:
+                train_data = train_data.to(self.current_device())
+            if not torch.is_tensor(val_data):
+                val_data = torch.tensor(val_data.astype(np.int16), device=self.current_device())
+            else:
+                val_data = val_data.to(self.current_device())
 
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
@@ -220,16 +227,22 @@ class ModularBase(nn.Module, ABC):
                 train_metrics.reset(), val_metrics.reset()
 
                 # shuffle dataset
-                perm = np.random.permutation(len(train_data))
-                train_data = train_data[perm]
-                train_labels = train_labels.iloc[perm].reset_index(drop=True)
+                train_perm = np.random.permutation(len(train_data))
+                val_perm = np.random.permutation(len(val_data))         # even if shuffling the validation is not required, having a permutation is useful when using sparse data
 
                 # train epoch
                 [c.on_train_epoch_start(self, epoch) for c in callbacks]
                 for b in range(num_batches):
                     [c.on_train_batch_start(self) for c in callbacks]
-                    batch = train_data[b * batch_size: (b + 1) * batch_size]
-                    batch_labels = train_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+                    batch_perm = train_perm[b * batch_size: (b + 1) * batch_size]
+                    if train_data.is_sparse:  # sparse tensor does not support array indexing
+                        mask = (train_data._indices()[0].view(-1, 1) == torch.tensor(batch_perm).to(self.current_device()).view(1, -1)).sum(axis=1).bool()
+                        indices = train_data._indices()[:,mask]
+                        indices[0] = torch.tensor([np.where(batch_perm == i.item())[0].item() for i in indices[0]], device=self.current_device())
+                        batch = torch.sparse_coo_tensor(indices, train_data._values()[mask], (batch_size, *train_data.shape[1:])).to_dense()
+                    else:
+                        batch = train_data[batch_perm]
+                    batch_labels = train_labels.iloc[batch_perm].reset_index()
                     self.train_step(batch, batch_labels, num_batches, metrics=train_metrics.metrics)
                     [c.on_train_batch_end(self, train_metrics.metrics) for c in callbacks]
                 [c.on_train_epoch_end(self, epoch, train_metrics.metrics) for c in callbacks]
@@ -239,8 +252,15 @@ class ModularBase(nn.Module, ABC):
                     [c.on_validation_epoch_start(self, epoch) for c in callbacks]
                     for b in range(num_val_batches):
                         [c.on_validation_batch_start(self) for c in callbacks]
-                        batch = val_data[b * batch_size: (b + 1) * batch_size]
-                        batch_labels = val_labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+                        batch_perm = val_perm[b * batch_size: (b + 1) * batch_size]
+                        if val_data.is_sparse:  # sparse tensor does not support array indexing
+                            mask = (val_data._indices()[0].view(-1, 1) == torch.tensor(batch_perm).to(self.current_device()).view(1, -1)).sum(axis=1).bool()
+                            indices = val_data._indices()[:,mask]
+                            indices[0] = torch.tensor([np.where(batch_perm == i.item())[0].item() for i in indices[0]], device=self.current_device())
+                            batch = torch.sparse_coo_tensor(indices, val_data._values()[mask], (batch_size, *val_data.shape[1:])).to_dense()
+                        else:
+                            batch = val_data[batch_perm]
+                        batch_labels = val_labels.iloc[batch_perm].reset_index()
                         self.validation_step(batch, batch_labels, num_val_batches, metrics=val_metrics.metrics)
                         [c.on_validation_batch_end(self, val_metrics.metrics) for c in callbacks]
                     [c.on_validation_epoch_end(self, epoch, val_metrics.metrics) for c in callbacks]

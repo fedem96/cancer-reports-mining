@@ -8,9 +8,6 @@ from callbacks.model_checkpoint import ModelCheckpoint
 from utils.chrono import Chronostep
 from utils.constants import *
 from utils.dataset import Dataset
-from utils.idf import InverseFrequenciesCounter
-from utils.preprocessing import *
-from utils.tokenizing import TokenCodec, Tokenizer
 from utils.utilities import *
 
 parser = argparse.ArgumentParser(description='Train a model')
@@ -21,16 +18,13 @@ parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each cl
 parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
 parser.add_argument("-cr", "--concatenate-reports", help="whether to concatenate reports of the same record before training", default=False, action='store_true')
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
+parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=50, type=int)
-parser.add_argument("-f", "--filter",
-                    help="report filtering strategy",
+parser.add_argument("-f", "--filter", help="report filtering strategy",
                     default=None, type=str, choices=['same_year', 'classifier'], metavar='STRATEGY')
-parser.add_argument("-fa", "--filter-args",
-                    help="args for report filtering strategy",
-                    default=None, type=json.loads)
-parser.add_argument("-gb", "--group-by",
-                    help="list of (space-separated) grouping attributes to make multi-report predictions.",
+parser.add_argument("-fa", "--filter-args", help="args for report filtering strategy", default=None, type=json.loads)
+parser.add_argument("-gb", "--group-by", help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-ic", "--input-cols", help="Inverse Document Frequencies filename", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
@@ -44,7 +38,7 @@ parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length 
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
 parser.add_argument("-pr", "--pool-reports", help="whether (and how) to pool reports (i.e. aggregate features of reports in the same record)", default=None, type=str, choices=["max"])
-parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"], required=True)
+parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"])
 parser.add_argument("-rd", "--regressors-dropout", help="dropout before each regressor", default=0, type=float)
 parser.add_argument("-rl2p", "--regressors-l2-penalty", help="l2 penalty for each regressor", default=0, type=float)
 parser.add_argument("-rt", "--reports-transformation", help="how to transform reports (i.e. how to obtain a deep representation of the reports)", default="identity", choices=["identity", "transformer"])
@@ -54,31 +48,27 @@ parser.add_argument("-tr", "--train-regressions", help="list of regressions", de
 args = parser.parse_args()
 print("args:", vars(args))
 
-p = Preprocessor.get_default()
-t = Tokenizer()
-tc = TokenCodec().load(os.path.join(args.dataset_dir, args.codec))
-idf = InverseFrequenciesCounter().load(os.path.join(args.dataset_dir, args.idf))
-
-DATA_COL = "encoded_data"
-
 with Chronostep("reading input"):
-
     classifications, regressions = args.train_classifications, args.train_regressions
     transformations = args.labels_preprocessing
 
+
+def full_pipe(report):
+    return tc.encode(t.tokenize(p.preprocess(report)))
+
 with Chronostep("encoding reports"):
-    sets = {"train": Dataset(os.path.join(args.dataset_dir, TRAINING_SET)), "val": Dataset(os.path.join(args.dataset_dir, VALIDATION_SET))}
-
-
-    def full_pipe(report):
-        return tc.encode(t.tokenize(p.preprocess(report)))
-
+    sets = {
+        "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, max_report_length=args.max_length),
+        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, max_report_length=args.max_length)
+    }
 
     for set_name in ["train", "val"]:
         dataset = sets[set_name]
-        dataset.set_input_cols(args.input_cols)
-        dataset.add_encoded_column(full_pipe, DATA_COL, args.max_length)
-        dataset.set_encoded_data_column(DATA_COL)
+
+        tc = dataset.token_codec
+        t = dataset.tokenizer
+        p = dataset.preprocessor
+        dataset.add_encoded_column(full_pipe, dataset.encoded_data_column, dataset.max_report_length)
         dataset.prepare_for_training(classifications, regressions, transformations)
         if set_name == "train":
             columns_codec = dataset.get_columns_codec()
@@ -105,9 +95,10 @@ with Chronostep("encoding reports"):
     # training.limit(16840)
     # validation.limit(2048)
 
-with Chronostep("calculating labels distributions"):
+with Chronostep("getting labels"):
     training_labels = training.get_labels()
     validation_labels = validation.get_labels()
+with Chronostep("calculating labels distributions"):
     for column in training.classifications:
         print("training")
         print(training_labels[column].value_counts()) # TODO: show also percentages
@@ -138,7 +129,10 @@ with Chronostep("creating model"):
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
-    model_args = {"vocab_size": tc.num_tokens()+1, "preprocessor": p, "tokenizer": t, "token_codec": tc, "labels_codec": training.get_columns_codec(), "idf": idf}
+    model_args = {
+        "vocab_size": training.token_codec.num_tokens()+1, "preprocessor": training.preprocessor, "tokenizer": training.tokenizer,
+        "token_codec": training.token_codec, "labels_codec": training.get_columns_codec(), "idf": training.idf
+    }
     if args.model_args is not None:
         model_args.update(args.model_args)
     if args.net_seed is not None:
@@ -189,7 +183,7 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
             ]
 
 with Chronostep("training"):
-    model.fit(training.get_data(DATA_COL), training_labels, validation.get_data(DATA_COL), validation_labels, info, callbacks, **hyperparameters)
+    model.fit(training.get_data(args.data_format), training_labels, validation.get_data(args.data_format), validation_labels, info, callbacks, **hyperparameters)
 
 # TODO: clean code and apis
 # TODO: speedup script
