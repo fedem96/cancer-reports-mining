@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser(description='Train a model')
 parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0, type=float)
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=128, type=int)
 parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
+parser.add_argument("-cp", "--copy", help="copy columns", default=[], nargs="+", type=str)
 parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each classifier", default=0, type=float)
 parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
 parser.add_argument("-cr", "--concatenate-reports", help="whether to concatenate reports of the same record before training", default=False, action='store_true')
@@ -78,6 +79,8 @@ with Chronostep("encoding reports"):
         t = dataset.tokenizer
         p = dataset.preprocessor
         dataset.add_encoded_column(full_pipe, dataset.encoded_data_column, dataset.max_report_length)
+        for c in range(0, len(args.copy), 2):
+            dataset.copy_column(args.copy[c], args.copy[c+1])
         if set_name == "train":
             dataset.set_classifications(classifications + anti_classifications)
             dataset.set_regressions(regressions + anti_regressions)

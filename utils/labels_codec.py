@@ -279,7 +279,7 @@ class RegexLookup:
 
     def __getitem__(self, key):
         for pattern, value in self.lookup_pairs:
-            if re.search(pattern, key):
+            if re.search(pattern, str(key)):
                 return value
         return key
 

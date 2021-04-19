@@ -29,13 +29,13 @@ class Preprocessor:
             new_text += text[:k] + " x "
             text = text[k+1:]
             s = re.search("\dx\d", text)
-        new_text += text
+        text = new_text + text
 
         for c in '!"#€$%()*+,-./:;<=>?@[\\]^_`{|}~&':  # spaces around punctuation
             text = re.sub(re.escape(c), " " + c + " ", text)
 
         # TODO: handle numeric strings?
-        return new_text.strip()
+        return text.strip()
 
     def preprocess_batch(self, texts):
         prep = self.preprocess

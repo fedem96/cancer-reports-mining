@@ -15,6 +15,7 @@ from metrics.accuracy import Accuracy
 from metrics.average import Average
 from metrics.cks import CohenKappaScore
 from metrics.dbcs import DumbBaselineComparisonScore
+from metrics.f1 import F1Score
 from metrics.mae import MeanAbsoluteError
 from metrics.metrics import Metrics
 from metrics.m_f1 import MacroF1Score
@@ -398,7 +399,8 @@ class ModularBase(nn.Module, ABC):
     def create_classifications_metrics(self, tasks):
         return {
             "Accuracy": {t['name']: Accuracy() for t in tasks},
-            "M-F1": {t['name']: MacroF1Score() for t in tasks},
+            "F1": {t['name']: F1Score() for t in tasks if t['num_classes'] == 2},
+            "M-F1": {t['name']: MacroF1Score() for t in tasks if t['num_classes'] > 2},
             "CKS": {t['name']: CohenKappaScore() for t in tasks},
             "DBCS": {t['name']: DumbBaselineComparisonScore(t['highest_frequency']) for t in tasks}
         }

@@ -85,6 +85,11 @@ class Dataset:
             self.dataframe[new_column_name] = [sequence[:max_length] for sequence in self.dataframe[new_column_name]]
         self.encoded_input_cols.append(new_column_name)
 
+    def copy_column(self, src_col, dest_col):
+        assert src_col in self.dataframe.columns        # src_col must already be in the dataset
+        assert dest_col not in self.dataframe.columns   # dest_col must not already be in the dataset
+        self.dataframe[dest_col] = self.dataframe[src_col]
+
     def set_classifications(self, classifications):
         self.classifications = copy.deepcopy(classifications)
         self._update_nunique()
