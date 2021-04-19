@@ -11,7 +11,7 @@ class Tokenizer:
 
     def __init__(self, tokenizer='it'):
         self._tknzr = spacy.load(tokenizer, disable=["tagger", "parser", "ner"])
-        self._tknzr.add_pipe(lambda doc: [str(token) for token in doc])
+        self._tknzr.add_pipe(lambda doc: [str(token) for token in doc])  # str(token) can be replaced with token.lemma_ to get the lemma
 
     def tokenize(self, text):
         tokens = self._tknzr(text)
@@ -77,17 +77,22 @@ class TokenCodecCreator:
         self.preprocessor = preprocessor
         self.tokenizer = Tokenizer(tokenizer)
 
-    def create_codec(self, texts, min_occurrences=0):
+    def create_codec(self, texts, min_occurrences=0, max_occurrences=None):
         encoder = {}
         decoder = {}
+        found_tokens = set()
         count = 0
         tokens_batch = self.tokenizer.tokenize_batch(self.preprocessor.preprocess_batch(texts))
         occurrences = defaultdict(lambda: 0)
         for tokens in tokens_batch:
             for token in tokens:
                 occurrences[token] += 1
-                if occurrences[token] >= min_occurrences and token not in encoder:
-                    count += 1
-                    encoder[token] = count
-                    decoder[count] = token
+                if occurrences[token] >= min_occurrences and token not in found_tokens:
+                    found_tokens.add(token)
+
+        for token in found_tokens:
+            if max_occurrences is None or occurrences[token] <= max_occurrences:
+                count += 1
+                encoder[token] = count
+                decoder[count] = token
         return TokenCodec(encoder, decoder, occurrences)

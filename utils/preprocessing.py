@@ -31,6 +31,9 @@ class Preprocessor:
             s = re.search("\dx\d", text)
         new_text += text
 
+        for c in '!"#€$%()*+,-./:;<=>?@[\\]^_`{|}~&':  # spaces around punctuation
+            text = re.sub(re.escape(c), " " + c + " ", text)
+
         # TODO: handle numeric strings?
         return new_text.strip()
 

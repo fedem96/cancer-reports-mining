@@ -158,7 +158,7 @@ dfTest = df[df['id_paz'].isin(testPatients)].copy()
 print("generating codec")
 replace_nulls(dfTrain, {col: "" for col in input_cols})
 texts = merge_and_extract(dfTrain, input_cols)
-tc = TokenCodecCreator().create_codec(texts, min_occurrences=100)
+tc = TokenCodecCreator().create_codec(texts, min_occurrences=10)
 tc.save(os.path.join(args.dataset_dir, args.codec))
 
 print("generating idf")

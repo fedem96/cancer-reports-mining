@@ -8,6 +8,8 @@ developed and tested with python 3.8
 
 + install italian language for spacy: `python -m spacy download it`
 
++ install wordnet and omw for nltk: `python -m nltk.downloader wordnet omw`
+
 ### GPU requirements (optional)
 developed and tested with CUDA 10.0.130
 
