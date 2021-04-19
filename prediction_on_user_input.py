@@ -15,7 +15,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model = load(args.model)
 model.eval()
 torch.set_grad_enabled(False)
-classifications, regressions = list(model.classifiers.keys()), list(model.regressors.keys())
+classifications, regressions = model.get_validation_classifications(), model.get_validation_regressions()
 
 while True:
     print("Write a report of the patient, then press enter. You can enter multiple reports in this way.")
@@ -31,7 +31,7 @@ while True:
         encoded_record.append(model.encode_report(report))
 
     max_len = max([len(enc_rep) for enc_rep in encoded_record])
-    out = model(torch.stack([torch.tensor(np.pad(enc_rep, (0,max_len-len(enc_rep))), device=device) for enc_rep in encoded_record]).unsqueeze(0))
+    out = model(torch.stack([torch.tensor(np.pad(enc_rep, (0,max_len-len(enc_rep))), device=device) for enc_rep in encoded_record]).unsqueeze(0), explain=True)
     # print("['" + "',\n'".join(record) + "']")
     for cls_var in classifications:
         print(cls_var)

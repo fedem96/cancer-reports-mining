@@ -26,8 +26,9 @@ parser.add_argument("-f", "--filter", help="report filtering strategy",
 parser.add_argument("-fa", "--filter-args", help="args for report filtering strategy", default=None, type=json.loads)
 parser.add_argument("-gb", "--group-by", help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
+parser.add_argument("-grl", "--gradient-reversal-lambda", help="value of lambda for each Gradient Reversal Layer", default=0.05, type=float)
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
-parser.add_argument("-ic", "--input-cols", help="Inverse Document Frequencies filename", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
+parser.add_argument("-ic", "--input-cols", help="list of input columns names", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-lp", "--labels-preprocessing", help="how to preprocess the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
@@ -43,13 +44,16 @@ parser.add_argument("-rd", "--regressors-dropout", help="dropout before each reg
 parser.add_argument("-rl2p", "--regressors-l2-penalty", help="l2 penalty for each regressor", default=0, type=float)
 parser.add_argument("-rt", "--reports-transformation", help="how to transform reports (i.e. how to obtain a deep representation of the reports)", default="identity", choices=["identity", "transformer"])
 parser.add_argument("-rta", "--reports-transformation-args", help="args for report transformation", default={}, type=json.loads)
+parser.add_argument("-tac", "--train-anti-classifications", help="list of classifications preceded by a Gradient Reversal Layer", default=[], nargs="+", type=str)
+parser.add_argument("-tar", "--train-anti-regressions", help="list of regressions preceded by a Gradient Reversal Layer", default=[], nargs="+", type=str)
 parser.add_argument("-tc", "--train-classifications", help="list of classifications", default=[], nargs="+", type=str)
+parser.add_argument("-to", "--training-set-only", help="list of variables to predict only on the training set", default=[], nargs="+", type=str)
 parser.add_argument("-tr", "--train-regressions", help="list of regressions", default=[], nargs="+", type=str)
 args = parser.parse_args()
 print("args:", vars(args))
 
 with Chronostep("reading input"):
-    classifications, regressions = args.train_classifications, args.train_regressions
+    classifications, regressions, anti_classifications, anti_regressions = args.train_classifications, args.train_regressions, args.train_anti_classifications, args.train_anti_regressions
     transformations = args.labels_preprocessing
 
 
@@ -61,6 +65,7 @@ with Chronostep("encoding reports"):
         "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, max_report_length=args.max_length),
         "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, max_report_length=args.max_length)
     }
+    training, validation = sets["train"], sets["val"]
 
     for set_name in ["train", "val"]:
         dataset = sets[set_name]
@@ -69,11 +74,15 @@ with Chronostep("encoding reports"):
         t = dataset.tokenizer
         p = dataset.preprocessor
         dataset.add_encoded_column(full_pipe, dataset.encoded_data_column, dataset.max_report_length)
-        dataset.prepare_for_training(classifications, regressions, transformations)
         if set_name == "train":
-            columns_codec = dataset.get_columns_codec()
+            dataset.set_classifications(classifications + anti_classifications)
+            dataset.set_regressions(regressions + anti_regressions)
+            labels_codec = dataset.create_labels_codec(transformations)
         else:
-            dataset.set_columns_codec(columns_codec)
+            dataset.set_classifications([var for var in classifications + anti_classifications if var not in args.training_set_only])
+            dataset.set_regressions([var for var in regressions + anti_regressions if var not in args.training_set_only])
+            dataset.set_labels_codec(labels_codec)
+
         dataset.encode_labels()
 
         if args.group_by is not None:
@@ -88,7 +97,6 @@ with Chronostep("encoding reports"):
 
             dataset.compute_lazy()
 
-    training, validation = sets["train"], sets["val"]
     if args.group_by is not None:
         training.assert_disjuncted(validation)
 
@@ -102,9 +110,10 @@ with Chronostep("calculating labels distributions"):
     for column in training.classifications:
         print("training")
         print(training_labels[column].value_counts()) # TODO: show also percentages
-        print("validation")
-        print(validation_labels[column].value_counts())
-        print()
+        if column in validation_labels:
+            print("validation")
+            print(validation_labels[column].value_counts())
+            print()
     for column in training.regressions:
         print(column)
         print("training")
@@ -112,12 +121,13 @@ with Chronostep("calculating labels distributions"):
         print("max:", training_labels[column].max())
         print("mean:", training_labels[column].mean())
         print("std:", training_labels[column].std())
-        print("validation")
-        print("min:", validation_labels[column].min())
-        print("max:", validation_labels[column].max())
-        print("mean:", validation_labels[column].mean())
-        print("std:", validation_labels[column].std())
-        print()
+        if column in validation_labels:
+            print("validation")
+            print("min:", validation_labels[column].min())
+            print("max:", validation_labels[column].max())
+            print("mean:", validation_labels[column].mean())
+            print("std:", validation_labels[column].std())
+            print()
 
 with Chronostep("creating model"):
     model_name = args.name or random_name(str(args.model).split(".")[-1])
@@ -131,7 +141,7 @@ with Chronostep("creating model"):
     Model = getattr(import_module(module), class_name)
     model_args = {
         "vocab_size": training.token_codec.num_tokens()+1, "preprocessor": training.preprocessor, "tokenizer": training.tokenizer,
-        "token_codec": training.token_codec, "labels_codec": training.get_columns_codec(), "idf": training.idf
+        "token_codec": training.token_codec, "labels_codec": training.get_labels_codec(), "idf": training.idf
     }
     if args.model_args is not None:
         model_args.update(args.model_args)
@@ -144,10 +154,16 @@ with Chronostep("creating model"):
     model.set_reports_pooling_method(args.pool_reports)
 
     for cls_var in classifications:
-        model.add_classification(cls_var, training.nunique(cls_var), args.classifiers_dropout)
+        model.add_classification(cls_var, training.nunique(cls_var), args.classifiers_dropout, args.classifiers_l2_penalty, cls_var in args.training_set_only)
 
     for reg_var in regressions:
-        model.add_regression(reg_var, args.regressors_dropout)
+        model.add_regression(reg_var, args.regressors_dropout, args.classifiers_l2_penalty, reg_var in args.training_set_only)
+
+    for cls_var in anti_classifications:
+        model.add_anti_classification(cls_var, training.nunique(cls_var), args.classifiers_dropout, args.classifiers_l2_penalty, args.gradient_reversal_lambda, cls_var in args.training_set_only)
+
+    for reg_var in anti_regressions:
+        model.add_anti_regression(reg_var, args.regressors_dropout, args.regressors_l2_penalty, args.gradient_reversal_lambda, reg_var in args.training_set_only)
 
 print("created model: " + model_name)
 print("model device:", model.current_device())
@@ -182,7 +198,7 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
              #EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)
             ]
 
-with Chronostep("training"):
+with Chronostep("training model '{}'".format(model_name)):
     model.fit(training.get_data(args.data_format), training_labels, validation.get_data(args.data_format), validation_labels, info, callbacks, **hyperparameters)
 
 # TODO: clean code and apis

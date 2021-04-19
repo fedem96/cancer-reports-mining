@@ -4,6 +4,7 @@ dill~=0.3.3
 flask~=1.1.2
 flask_cors~=3.0.10
 matplotlib~=3.3.4
+nltk~=3.5
 numpy~=1.19.2
 pandas~=1.1.2
 pandasql~=0.7.3

@@ -61,8 +61,8 @@ def predict_API():
     tokens_indices = [tokens_array.tolist() for tokens_array in model.token_codec.encode_batch(tokens)]
     return jsonify({
         **{k: v.cpu().tolist() for k,v in predictions.items() if k in {"reports_importance", "tokens_importance"}},
-        "classifications": {k: {model.labels_codec[k].decode(i): v for i,v in enumerate(v.cpu().squeeze().softmax(0).tolist())} for k,v in predictions.items() if k in model.classifiers.keys()},
-        "regressions": {k: model.labels_codec[k].decode(v.cpu().squeeze().item()) for k,v in predictions.items() if k in model.regressors.keys()},
+        "classifications": {k: {model.labels_codec[k].decode(i): v for i,v in enumerate(v.cpu().squeeze().softmax(0).tolist())} for k,v in predictions.items() if k in model.get_validation_classifications()},
+        "regressions": {k: model.labels_codec[k].decode(v.cpu().squeeze().item()) for k,v in predictions.items() if k in model.get_validation_regressions()},
         "tokens": [
             [{"text": t, "index": i} for t,i in zip(record_tokens, record_tokens_indices)]
             for record_tokens, record_tokens_indices in zip(tokens, tokens_indices)

@@ -31,8 +31,7 @@ input_cols = ["diagnosi", "macroscopia", "notizie"]
 classifications_labels_cols = ["grading", "metastasi", "modalita_N", "modalita_T", "morfologia_icdo3", "sede_icdo3", "stadio_N", "stadio_T", "tipo_T"]
 regressions_labels_cols = ["cerb", "dimensioni","ki67", "mib1", "numero_sentinella_asportati", "numero_sentinella_positivi", "recettori_estrogeni", "recettori_progestin"]
 
-dataset = Dataset(os.path.join(args.dataset_dir, args.set + "_set.csv"))
-dataset.set_input_cols(input_cols)
+dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols)
 
 if args.group_by is not None:
     dataset.lazy_group_by(args.group_by)

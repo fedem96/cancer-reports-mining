@@ -5,17 +5,20 @@ from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim import Adam, AdamW
 
 from callbacks.base_callback import Callback
+from layers.gradient_reversal import GradientReversal
 from metrics.accuracy import Accuracy
 from metrics.average import Average
 from metrics.cks import CohenKappaScore
 from metrics.dbcs import DumbBaselineComparisonScore
-from metrics.mae import MeanAverageError
+from metrics.mae import MeanAbsoluteError
 from metrics.metrics import Metrics
-from metrics.mf1 import MacroF1Score
-from metrics.nmae import NormalizedMeanAverageError
+from metrics.m_f1 import MacroF1Score
+from metrics.nmae import NormalizedMeanAbsoluteError
+from utils.chrono import Chronometer
 
 
 class ModularBase(nn.Module, ABC):
@@ -24,8 +27,7 @@ class ModularBase(nn.Module, ABC):
         self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
             **modules_dict,
-            "classifiers": nn.ModuleDict({}),
-            "regressors": nn.ModuleDict({})
+            "predictors": nn.ModuleDict({})
         }))
 
         self.preprocessor = preprocessor
@@ -35,8 +37,8 @@ class ModularBase(nn.Module, ABC):
 
         self.deep_features = deep_features
 
-        self.classifiers = self.net['classifiers']
-        self.regressors = self.net['regressors']
+        self.predictors = self.net['predictors']
+        self.predictors_l2_penalty = {}
 
         for module_name in modules_dict:
             if hasattr(self, module_name):
@@ -44,8 +46,6 @@ class ModularBase(nn.Module, ABC):
             setattr(self, module_name, modules_dict[module_name])
 
         self.losses = {}
-        self.dumb_baseline_train_accuracy = {}
-        self.dumb_baseline_val_accuracy = {}
         self.num_classes = {}
         self.train_stds = {}
         self.val_stds = {}
@@ -61,6 +61,9 @@ class ModularBase(nn.Module, ABC):
 
         self.reports_processor = None
         self.set_reports_transformation_method("identity")
+
+        self.training_tasks = {}
+        self.validation_tasks = {}
 
     def encode_report(self, report):
         return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
@@ -160,37 +163,34 @@ class ModularBase(nn.Module, ABC):
             # reports_importance.shape: (num_records, num_reports)
             out.update({"reports_importance": reports_importance})
         # features /= features.norm(dim=3)
-        classes = {var: classifier(features) for var, classifier in self.classifiers.items()}
+        predictions = {var: classifier(features) for var, classifier in self.predictors.items()}
         # classifier(features).shape: (num_records, num_reports, num_tokens, num_classes)
-        regressions = {var: regressor(features) for var, regressor in self.regressors.items()}
-        # regressor(features).shape: (num_records, num_reports, num_tokens, 1)
         if pool_predictions:
-            classes.update({var: self.predictions_pooler[var](classes[var]) for var in self.classifiers if var in self.predictions_pooler})
-            regressions.update({var: self.predictions_pooler[var](regressions[var]) for var in self.regressors if var in self.predictions_pooler})
-        out.update({"features": features, **classes, **regressions})
+            predictions.update({var: self.predictions_pooler[var](predictions[var]) for var in self.classifiers if var in self.predictions_pooler})
+        out.update({"features": features, **predictions})
         if explain:
             out.update({}) # TODO: finish
         return out
 
     def init_losses(self, train_labels, val_labels):
         self.losses = {}
-        self.dumb_baseline_train_accuracy = {}
-        self.dumb_baseline_val_accuracy = {}
         self.num_classes = {}
-        for var in self.classifiers:
+        for var in filter(lambda t: "classification" in self.training_tasks[t]["type"], self.training_tasks):
             classes_occurrences = train_labels[var].value_counts().sort_index().values
             self.num_classes[var] = len(classes_occurrences)
             assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
             classes_weights = 1 / classes_occurrences
             classes_weights = torch.from_numpy(classes_weights).float().to(self.current_device())
             self.losses[var] = nn.CrossEntropyLoss(classes_weights)
-            self.dumb_baseline_train_accuracy[var] = max(classes_occurrences) / sum(classes_occurrences)
-            y_val = val_labels[var].dropna()
-            self.dumb_baseline_val_accuracy[var] = (y_val == np.argmax(classes_occurrences)).sum() / len(y_val)
-        for var in self.regressors:
+            self.training_tasks[var]["highest_frequency"] = max(classes_occurrences) / sum(classes_occurrences)
+            if var in val_labels:
+                y_val = val_labels[var].dropna()
+                self.validation_tasks[var]["highest_frequency"] = (y_val == np.argmax(classes_occurrences)).sum() / len(y_val)
+        for var in filter(lambda t: "regression" in self.training_tasks[t]["type"], self.training_tasks):
             self.losses[var] = nn.MSELoss()  # TODO: multiply by a weight
-            self.train_stds[var] = train_labels[var].dropna().values.std()
-            self.val_stds[var] = val_labels[var].dropna().values.std()
+            self.training_tasks[var]["std"] = train_labels[var].dropna().values.std()
+            if var in val_labels:
+                self.validation_tasks[var]["std"] = val_labels[var].dropna().values.std()
 
     def fit(self, train_data, train_labels, val_data=None, val_labels=None, info={}, callbacks: List[Callback]=[], **hyperparams):
         self.info = info
@@ -220,8 +220,8 @@ class ModularBase(nn.Module, ABC):
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
-            train_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(True), **self.create_regressions_metrics(True), **self.create_grad_norm_metrics()})
-            val_metrics = Metrics({**self.create_losses_metrics(), **self.create_classifications_metrics(False), **self.create_regressions_metrics(False)})
+            train_metrics = Metrics({**self.create_losses_metrics(self.training_tasks), **self.create_metrics(self.training_tasks), **self.create_grad_norm_metrics()})
+            val_metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_metrics(self.validation_tasks)})
             for epoch in range(hyperparams["max_epochs"]):
                 [c.on_epoch_start(self, epoch) for c in callbacks]
                 train_metrics.reset(), val_metrics.reset()
@@ -290,41 +290,19 @@ class ModularBase(nn.Module, ABC):
         old_grad_vector = self.grad_vector()
         gradient_norms = {} # TODO: removable, it is used only during debug
 
-        for var in self.classifiers:
+        for var in self.predictors.keys():
+            if var not in labels:
+                continue
             mask = ~labels[var].isnull()
             if mask.sum() == 0:
                 continue
-            preds = forwarded[var][mask].squeeze(2).squeeze(1) # TODO: mask indexing is slow
-            grth = torch.tensor(labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False)
-            loss = self.losses[var](preds, grth) / len(grth)
-            if self.classifiers_l2_penalty > 0:
-                loss += self.classifiers_l2_penalty * sum(p.norm() for p in self.classifiers[var].parameters())
-            losses[var] = loss.detach().item()
-
-            if training:
-                loss.backward(retain_graph=True)
-                new_grad_vector = self.grad_vector()
-                gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
-                old_grad_vector = new_grad_vector
-                gradient_norms[var] = gradient_norm
-                metrics["GradNorm"][var].update(gradient_norm, num_batches)
-
-            grth = grth.cpu().numpy()
-            preds_classes = torch.argmax(preds.detach(), dim=1).cpu().numpy()
-
-            metrics["Loss"][var].update(losses[var], num_batches)
-            for metric_name in self.classification_metrics:
-                metrics[metric_name][var].update(preds_classes, grth)
-
-        for var in self.regressors:
-            mask = ~labels[var].isnull()
-            if mask.sum() == 0:
-                continue
-            preds = forwarded[var][mask].squeeze(3).squeeze(2).squeeze(1)
+            preds = forwarded[var][mask].squeeze()
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
+            if "classification" in self.training_tasks[var]["type"]:
+                grth = grth.long()
             loss = self.losses[var](preds, grth) / len(grth)
-            if self.regressors_l2_penalty > 0:
-                loss += self.regressors_l2_penalty * sum(p.norm() for p in self.regressors[var].parameters())
+            if self.training_tasks[var]['l2_penalty'] > 0:
+                loss += self.training_tasks[var]['l2_penalty'] * sum(p.norm() for p in self.predictors[var].parameters())
             losses[var] = loss.detach().item()
 
             if training:
@@ -335,9 +313,13 @@ class ModularBase(nn.Module, ABC):
                 gradient_norms[var] = gradient_norm
                 metrics["GradNorm"][var].update(gradient_norm, num_batches)
 
+            if "classification" in self.training_tasks[var]["type"]:
+                preds = torch.argmax(preds.detach(), dim=1)
+
             metrics["Loss"][var].update(losses[var], num_batches)
-            for metric_name in self.regression_metrics:
-                metrics[metric_name][var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
+            for metric_name, metric in metrics.items():
+                if metric_name not in {"Loss", "GradNorm"} and var in metric:
+                    metric[var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
         if self.activation_penalty != 0:
             regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
@@ -345,20 +327,51 @@ class ModularBase(nn.Module, ABC):
                 regularization_loss.backward()
                 new_grad_vector = self.grad_vector()
                 gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
-                gradient_norms["features_regularization_l1"] = gradient_norm
+                gradient_norms["features_l1"] = gradient_norm
+                metrics["GradNorm"]["features_l1"].update(gradient_norm, num_batches)
 
-    def add_classification(self, task_name, num_classes, dropout):
-        self.classifiers[task_name] = nn.Sequential(
+    def add_classification(self, task_name, num_classes, dropout, l2_penalty, training_only=False):
+        self.predictors[task_name] = nn.Sequential(
             nn.Dropout(dropout).to(self.current_device()),
             nn.Linear(self.deep_features, num_classes).to(self.current_device())
         )
+        task = {"name": task_name, "type": "classification", "num_classes": num_classes, "l2_penalty": l2_penalty}
+        self.training_tasks[task_name] = task
+        if not training_only:
+            self.validation_tasks[task_name] = task
 
-    def add_regression(self, task_name, dropout):
-        self.regressors[task_name] = nn.Sequential(
+    def add_regression(self, task_name, dropout, l2_penalty, training_only=False):
+        self.predictors[task_name] = nn.Sequential(
             nn.Dropout(dropout).to(self.current_device()),
             nn.Linear(self.deep_features, 1).to(self.current_device()),
             nn.Sigmoid()
         )
+        task = {"name": task_name, "type": "regression", "l2_penalty": l2_penalty}
+        self.training_tasks[task_name] = task
+        if not training_only:
+            self.validation_tasks[task_name] = task
+
+    def add_anti_classification(self, task_name, num_classes, dropout, l2_penalty, l, training_only=False):
+        self.predictors[task_name] = nn.Sequential(
+            GradientReversal(l),
+            nn.Dropout(dropout).to(self.current_device()),
+            nn.Linear(self.deep_features, num_classes).to(self.current_device())
+        )
+        task = {"name": task_name, "type": "anti_classification", "num_classes": num_classes, "l2_penalty": l2_penalty}
+        self.training_tasks[task_name] = task
+        if not training_only:
+            self.validation_tasks[task_name] = task
+
+    def add_anti_regression(self, task_name, dropout, l2_penalty, l, training_only=False):
+        self.predictors[task_name] = nn.Sequential(
+            GradientReversal(l),
+            nn.Dropout(dropout).to(self.current_device()),
+            nn.Linear(self.deep_features, 1).to(self.current_device())
+        )
+        task = {"name": task_name, "type": "anti_regression", "l2_penalty": l2_penalty}
+        self.training_tasks[task_name] = task
+        if not training_only:
+            self.validation_tasks[task_name] = task
 
     def __str__(self):
         str_dict = {}
@@ -369,33 +382,46 @@ class ModularBase(nn.Module, ABC):
             str_dict["parameters"][parameter_name] = parameter.numel()
         return str(str_dict)
 
-    def create_losses_metrics(self):
+    def create_metrics(self, tasks):
+        return {**self.create_classifications_metrics([t for t in tasks.values() if "classification" in t["type"]]),
+            **self.create_regressions_metrics([t for t in tasks.values() if "regression" in t["type"]])}
+
+    def create_losses_metrics(self, tasks):
         return {
-            "Loss": {var: Average(min) for var in list(self.classifiers.keys()) + list(self.regressors.keys())}
+            "Loss": {var: Average(min) for var in tasks.keys()}
         }
 
-    def create_classifications_metrics(self, training: bool):
-        dbcs = self.dumb_baseline_train_accuracy if training else self.dumb_baseline_val_accuracy
+    def create_classifications_metrics(self, tasks):
         return {
-            "Accuracy": {var: Accuracy() for var in self.classifiers},
-            "M-F1": {var: MacroF1Score() for var in self.classifiers},
-            "CKS": {var: CohenKappaScore() for var in self.classifiers},
-            "DBCS": {var: DumbBaselineComparisonScore(dbcs[var]) for var in self.classifiers}
+            "Accuracy": {t['name']: Accuracy() for t in tasks},
+            "M-F1": {t['name']: MacroF1Score() for t in tasks},
+            "CKS": {t['name']: CohenKappaScore() for t in tasks},
+            "DBCS": {t['name']: DumbBaselineComparisonScore(t['highest_frequency']) for t in tasks}
         }
 
-    def create_regressions_metrics(self, training: bool):
-        stds = self.train_stds if training else self.val_stds
+    def create_regressions_metrics(self, tasks):
         return {
-            "MAE": {var: MeanAverageError() for var in self.regressors},
-            "NMAE": {var: NormalizedMeanAverageError(stds[var]) for var in self.regressors}
+            "MAE": {t['name']: MeanAbsoluteError() for t in tasks},
+            "NMAE": {t['name']: NormalizedMeanAbsoluteError(t['std']) for t in tasks}
         }
 
     def create_grad_norm_metrics(self):
         return {
-            "GradNorm": {var: Average(max) for var in list(self.classifiers.keys()) + list(self.regressors.keys())}
+            "GradNorm": {var: Average(max) for var in list(self.predictors.keys()) + ["features_l1"]}
         }
 
     def grad_vector(self):
         device = self.current_device()
         return torch.cat([p.grad.detach().flatten() if p.grad is not None else torch.zeros(p.shape, device=device).flatten() for p in self.parameters()])
 
+    def get_training_classifications(self):
+        return [task["name"] for task in self.training_tasks.values() if "classification" in task["type"]]
+
+    def get_training_regressions(self):
+        return [task["name"] for task in self.training_tasks.values() if "regression" in task["type"]]
+
+    def get_validation_classifications(self):
+        return [task["name"] for task in self.validation_tasks.values() if "classification" in task["type"]]
+
+    def get_validation_regressions(self):
+        return [task["name"] for task in self.validation_tasks.values() if "regression" in task["type"]]

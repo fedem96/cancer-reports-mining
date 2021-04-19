@@ -3,7 +3,7 @@ import numpy as np
 from metrics.base.metric import Metric
 
 
-class MeanAverageError(Metric):
+class MeanAbsoluteError(Metric):
     def __init__(self):
         super().__init__(min)
         self.reset()

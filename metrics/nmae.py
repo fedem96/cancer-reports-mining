@@ -3,7 +3,7 @@ import numpy as np
 from metrics.base.metric import Metric
 
 
-class NormalizedMeanAverageError(Metric):
+class NormalizedMeanAbsoluteError(Metric):
     def __init__(self, normalizing_divisor):
         super().__init__(min)
         self.reset()

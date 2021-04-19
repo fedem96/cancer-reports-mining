@@ -1,18 +1,18 @@
 from metrics.base.metric import Metric
 
 
-class Accuracy(Metric):
+class MeanError(Metric):
     def __init__(self):
-        super().__init__(max)
+        super().__init__(min)
         self.reset()
 
     def reset(self):
-        self.num_correct = 0
+        self.error = 0
         self.num_examples = 0
 
     def update(self, preds, grth):
-        self.num_correct += (preds == grth).sum().item()
+        self.error += (preds - grth).sum().item()
         self.num_examples += len(grth)
 
     def __call__(self, *args, **kwargs):
-        return self.num_correct / self.num_examples if self.num_examples > 0 else float('nan')
+        return self.error / self.num_examples

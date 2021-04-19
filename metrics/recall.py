@@ -3,7 +3,7 @@ import numpy as np
 from metrics.base.metric import Metric
 
 
-class Precision(Metric):
+class Recall(Metric):
     def __init__(self, cls):
         super().__init__(max)
         self.reset()
@@ -28,5 +28,5 @@ class Precision(Metric):
             self.FN += (wrong & (grth == cls)).sum().item()
 
     def __call__(self, *args, **kwargs):
-        d = self.TP + self.FP
+        d = self.TP + self.FN
         return self.TP / d if d > 0 else 0

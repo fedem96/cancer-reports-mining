@@ -5,7 +5,7 @@ import numpy as np
 from metrics.base.metric import Metric
 
 
-class MacroF1Score(Metric):
+class MacroRecall(Metric):
     def __init__(self):
         super().__init__(max)
         self.reset()
@@ -25,9 +25,5 @@ class MacroF1Score(Metric):
             self.FN[cls] += (wrong & (grth == cls)).sum().item()
 
     def __call__(self, *args, **kwargs):
-        # f1 = 2 * (p * r) / (p + r)
-        precisions = [self.TP[key] / (self.TP[key] + self.FP[key]) if (self.TP[key] + self.FP[key]) > 0 else 0 for key in self.FN]
         recalls = [self.TP[key] / (self.TP[key] + self.FN[key]) for key in self.FN]
-        f1_scores = [2 * (p * r) / (p + r) if (p + r) > 0 else 0 for p, r in zip(precisions, recalls)]
-        # return f1_score(grth.cpu(), preds_classes.cpu(), average='macro')
-        return sum(f1_scores) / len(f1_scores)
+        return sum(recalls) / len(recalls) if len(recalls) > 0 else float('nan')

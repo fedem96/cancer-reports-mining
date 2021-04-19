@@ -1,3 +1,4 @@
+import copy
 import os
 import pickle
 import sys
@@ -30,8 +31,8 @@ class Dataset:
         self.classifications = []
         self.regressions = []
         self.transformations = None
-        self.columns_codec = None
         self.labels = None
+        self.labels_codec = None
         self.index_to_key = None
         self.key_to_index = None
         self._nunique = None
@@ -84,45 +85,34 @@ class Dataset:
             self.dataframe[new_column_name] = [sequence[:max_length] for sequence in self.dataframe[new_column_name]]
         self.encoded_input_cols.append(new_column_name)
 
-    # TODO: rename or remove this function
-    def prepare_for_training(self, classifications=[], regressions=[], transformations={}):
-        self.classifications, self.regressions = classifications, regressions
-        self.transformations = transformations
-        self._update_nunique()
-
     def set_classifications(self, classifications):
-        assert len(classifications) > 0
-        self.classifications = classifications
+        self.classifications = copy.deepcopy(classifications)
         self._update_nunique()
 
     def set_regressions(self, regressions):
-        assert len(regressions) > 0
-        self.classifications = regressions
+        self.regressions = copy.deepcopy(regressions)
         self._update_nunique()
 
     def set_transformations(self, transformations):
-        assert len(transformations) > 0
-        self.classifications = transformations
+        self.transformations = transformations
 
-    def _update_columns_codec(self):
-        # unique_values = {col: self.dataframe[col].dropna().unique() for col in self.classifications + self.regressions}
-        self.columns_codec = LabelsCodecFactory.from_transformations(self.classifications, self.regressions, self.transformations)
+    def create_labels_codec(self, prepare_labels_steps):
+        assert self.labels_codec is None  # labels codec already exists
+        self.labels_codec = LabelsCodecFactory.from_transformations(self.classifications, self.regressions, prepare_labels_steps)
+        return self.labels_codec
 
-    def get_columns_codec(self):
-        if self.columns_codec is None:
-            self._update_columns_codec()
-        return self.columns_codec
+    def get_labels_codec(self):
+        return self.labels_codec
 
-    def set_columns_codec(self, columns_codec):
-        self.columns_codec = columns_codec
+    def set_labels_codec(self, labels_codec):
+        self.labels_codec = labels_codec
 
     def encode_labels(self):
-        if self.columns_codec is None:
-            self._update_columns_codec()
+        assert self.labels_codec is not None  # labels codec must be created or set first
         for column in self.classifications:
-            self.dataframe[column] = self.columns_codec[column].encode_batch(self.dataframe[column])
+            self.dataframe[column] = self.labels_codec[column].encode_batch(self.dataframe[column])
         for column in self.regressions:
-            self.dataframe[column] = self.columns_codec[column].encode_batch(self.dataframe[column])
+            self.dataframe[column] = self.labels_codec[column].encode_batch(self.dataframe[column])
         self._update_nunique()
 
     def get_labels_columns(self):
@@ -135,8 +125,8 @@ class Dataset:
                 cols = labels_columns
                 tmp = [df.loc[:,cols] for df in dataframe]
                 l = [t.head(1) for t in tmp]
-                return pd.concat(l)
-            return self.dataframe[labels_columns]
+                return pd.concat(l).reset_index(drop=True)
+            return self.dataframe[labels_columns].reset_index(drop=True)
         return caching(_get_labels)(self.dataframe, self.get_labels_columns())
 
     def get_data(self, data_type="indices", column_name=None):

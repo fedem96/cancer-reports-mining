@@ -11,6 +11,7 @@ from utils.utilities import merge_and_extract
 
 parser = argparse.ArgumentParser(description='Predict random samples')
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
+parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 # parser.add_argument("-f", "--filter",
 #                     help="report filtering strategy",
@@ -34,14 +35,14 @@ input_cols = ["diagnosi", "macroscopia", "notizie"]
 model = load(args.model)
 model.eval()
 torch.set_grad_enabled(False)
-classifications, regressions = list(model.classifiers.keys()), list(model.regressors.keys())
+classifications, regressions = model.get_validation_classifications(), model.get_validation_regressions()
 
 DATA_COL = "encoded_data"
-dataset = Dataset(os.path.join(args.dataset_dir, args.set + "_set.csv"))
-dataset.set_input_cols(input_cols)
+dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols)
 dataset.add_encoded_column(model.encode_report, DATA_COL, args.max_length)
-dataset.prepare_for_training(classifications, regressions, {}) # TODO: transformations and mappings
-dataset.set_columns_codec(model.labels_codec)
+dataset.set_classifications(classifications)
+dataset.set_regressions(regressions)
+dataset.set_labels_codec(model.labels_codec)
 dataset.encode_labels()
 
 multi_layer = False
@@ -53,7 +54,7 @@ if args.group_by is not None:
 if args.data_seed is not None:
     np.random.seed(args.data_seed)
 
-data, labels = dataset.get_data(DATA_COL), dataset.get_labels().reset_index(drop=True)
+data, labels = dataset.get_data(args.data_format), dataset.get_labels()
 
 while True:
     index = np.random.randint(0,len(data))
