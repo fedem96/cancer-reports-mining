@@ -6,7 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import Adam, AdamW
+from torch.optim import Adam, AdamW, SGD
+from torch.optim.lr_scheduler import StepLR
 
 from callbacks.base_callback import Callback
 from layers.gradient_reversal import GradientReversal
@@ -217,11 +218,13 @@ class ModularBase(nn.Module, ABC):
             else:
                 val_data = val_data.to(self.current_device())
 
-            self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
+            self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"]) # TODO: get from argparse
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
             train_metrics = Metrics({**self.create_losses_metrics(self.training_tasks), **self.create_metrics(self.training_tasks), **self.create_grad_norm_metrics()})
             val_metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_metrics(self.validation_tasks)})
+
+            # scheduler = StepLR(self.optimizer, step_size=100, gamma=0.1) # TODO: get from argparse (use as callback?)
             for epoch in range(hyperparams["max_epochs"]):
                 [c.on_epoch_start(self, epoch) for c in callbacks]
                 train_metrics.reset(), val_metrics.reset()
@@ -266,6 +269,7 @@ class ModularBase(nn.Module, ABC):
                     [c.on_validation_epoch_end(self, epoch, val_metrics.metrics) for c in callbacks]
 
                 [c.on_epoch_end(self, epoch) for c in callbacks]
+                #scheduler.step()
         finally:
             [c.on_fit_end(self) for c in callbacks]
 

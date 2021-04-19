@@ -30,6 +30,8 @@ parser.add_argument("-grl", "--gradient-reversal-lambda", help="value of lambda 
 parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-ic", "--input-cols", help="list of input columns names", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
+parser.add_argument("-lrs", "--learning-rate-scheduler", help="type of learning rate scheduler", default=None, type=str, choices=["StepLR"]) # TODO: complete
+parser.add_argument("-lrsa", "--learning-rate-scheduler-args", help="args for learning rate scheduler", default={}, type=json.loads) # TODO: complete
 parser.add_argument("-lp", "--labels-preprocessing", help="how to preprocess the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
@@ -38,6 +40,8 @@ parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut lo
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
+parser.add_argument("-opt", "--optimizer", help="name of the optimizer", default="Adam", type=str, choices=["Adam", "AdamW", "SGD"]) # TODO: finish to implement
+parser.add_argument("-opta", "--optimizer-args", help="args for the optimizer", default={}, type=json.loads)
 parser.add_argument("-pr", "--pool-reports", help="whether (and how) to pool reports (i.e. aggregate features of reports in the same record)", default=None, type=str, choices=["max"])
 parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"])
 parser.add_argument("-rd", "--regressors-dropout", help="dropout before each regressor", default=0, type=float)
