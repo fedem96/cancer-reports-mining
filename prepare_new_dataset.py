@@ -30,11 +30,17 @@ df = pd.read_csv(args.raw_csv, delimiter="|", quotechar="'", encoding="ISO-8859-
 df = df.rename(columns={"Year_of_diagnosis": "anno_diagnosi"})
 print("cleaning data")
 
-''' remove invalid rows '''
-df.drop(df[df["id_isto"] == 5068716].index, inplace=True)
-
 ''' remove invalid columns '''
 df.drop(df.filter(regex="Unname"), axis=1, inplace=True)
+''' rename columns with invalid name '''
+df.columns = df.columns.str.replace('_%', '')
+
+
+''' remove invalid rows '''
+# df.drop(df[df["anno_referto"] != df["anno_diagnosi"]].index, inplace=True)
+df.drop(df[df["id_isto"] == 5068716].index, inplace=True)
+labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 'stadio_N', 'grading', 'dimensioni', 'recettori_estrogeni', 'recettori_progestin', 'numero_sentinella_asportati', 'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67']
+df.drop(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) == 14)].index, inplace=True)
 
 ''' clean "sede_icdo3" column '''
 df["sede_icdo3"] = df["sede_icdo3"].apply(lambda s: s.upper())
@@ -101,7 +107,7 @@ print("dtypes after cleaning:")
 print(df.dtypes)
 
 print("removing invalid data")
-for column in ["recettori_estrogeni_%", "ki67"]:
+for column in ["recettori_estrogeni", "ki67"]:
     # df.drop(df[df[column] < 0].index, inplace=True)
     df.loc[df.index[df[column] > 100], column] = np.NaN
     # df.drop(df[df[column] > 100].index, inplace=True)
@@ -110,7 +116,7 @@ input_cols = ["notizie", "macroscopia", "diagnosi"]
 replace_nulls(df, {col: "" for col in input_cols})
 for col in input_cols:
     df[col] = df[col].apply(lambda text: text.strip())
-df.drop(df[(df["diagnosi"] == "") & (df["macroscopia"] == "") & (df["notizie"] == "")].index, inplace=True)
+df.drop(df[(df["diagnosi"] == "") & (df["macroscopia"] == "")].index, inplace=True)
 
 print("solving ambiguities")
 df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False) # TODO
@@ -120,7 +126,7 @@ if args.quick:
 else:
     print("asserting data validity")
     assert sqldf("select count(*) from df group by id_isto having count(*) > 1").sum().item() == 0
-    for column in ["recettori_estrogeni_%", "recettori_progestin_%", "mib1", "cerb", "ki67"]:
+    for column in ["recettori_estrogeni", "recettori_progestin", "mib1", "cerb", "ki67"]:
         # a percentage can't be smaller than 0 or greater than 100
         assert df[column].min() >= 0 and df[column].max() <= 100
     for col in set(df.columns) - {"id_paz", "anno_diagnosi", "anno_referto", "id_isto", "notizie", "macroscopia", "diagnosi"}:
@@ -184,7 +190,7 @@ dfTest.to_csv(os.path.join(args.dataset_dir, TEST_SET), index=False)
 print("calculating statistics")
 stats_dir = os.path.join(args.dataset_dir, args.stats)
 bar_columns = ["anno_diagnosi", "sede_icdo3", "morfologia_icdo3", "tipo_T", "metastasi", "modalita_T", "modalita_N", "stadio_T", "stadio_N", "grading", "anno_referto"]
-hist_columns = ["dimensioni", "recettori_estrogeni_%", "recettori_progestin_%", "numero_sentinella_asportati", "numero_sentinella_positivi", "mib1", "cerb", "ki67"]
+hist_columns = ["dimensioni", "recettori_estrogeni", "recettori_progestin", "numero_sentinella_asportati", "numero_sentinella_positivi", "mib1", "cerb", "ki67"]
 years = range(2003, 2016)
 dataframes = [df] + [df[df["anno_diagnosi"] == year] for year in years] + [dfTrain, dfVal, dfTest]
 images_dirs = [stats_dir] + [os.path.join(stats_dir, str(year)) for year in years] + [os.path.join(stats_dir, "train"), os.path.join(stats_dir, "val"), os.path.join(stats_dir, "test")]

@@ -85,13 +85,20 @@
                         <div class="col">
                             <bar-chart :data="classification.chartData" :options="classification.chartOptions" v-if="classification.chartData != null"></bar-chart>
                         </div>
-                        
                     </div>
                 </div>
                 <div class="col">
                     Regressions
-                    <div v-for="regVar in regressions" class="row">
-                        {{regVar}}
+                    <div v-for="(regression, regVar) in regressions" class="row">
+                        <div class="col">
+                            {{regVar}}
+                        </div>
+                        <div class="col">
+                            {{regression.groundtruth}}
+                        </div>
+                        <div class="col">
+                            {{regression.prediction}}
+                        </div>
                     </div>
 
                 </div>

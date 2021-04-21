@@ -25,7 +25,6 @@ class Dataset:
         self.set_name = set_name
         self.csv_file = os.path.join(directory, set_name)
         self.dataframe = pd.read_csv(self.csv_file)
-        self.dataframe.columns = self.dataframe.columns.str.replace('_%', '')
         self.input_cols = input_cols
         self.encoded_input_cols = []
         self.classifications = []
@@ -125,14 +124,14 @@ class Dataset:
 
     # TODO: very slow, speedup
     def get_labels(self):
-        def _get_labels(dataframe, labels_columns):
+        def _get_labels(dataframe, labels_columns, nuniques):
             if type(dataframe) == list:
                 cols = labels_columns
                 tmp = [df.loc[:,cols] for df in dataframe]
                 l = [t.head(1) for t in tmp]
                 return pd.concat(l).reset_index(drop=True)
             return self.dataframe[labels_columns].reset_index(drop=True)
-        return caching(_get_labels)(self.dataframe, self.get_labels_columns())
+        return caching(_get_labels)(self.dataframe, self.get_labels_columns(), [self.nunique(col) for col in self.get_labels_columns()])
 
     def get_data(self, data_type="indices", column_name=None):
         if column_name is None:
@@ -147,20 +146,22 @@ class Dataset:
         def _get_data_as_tokens_indices(dataframe, col_name, function_name):  # function_name is required for caching
             # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
             if type(dataframe) == list:
-                reports_lengths = [[len(report.astype(np.uint16)[report.astype(np.uint16) != 0]) for report in record[col_name].values] for record in dataframe]
-                records_sizes = [len(record) for record in dataframe]
+                records = [[report.astype(np.uint16) for report in record[col_name].values] for record in dataframe]
+                records = [[report[report != 0] for report in record if len(report[report != 0]) > 0] for record in records]
+                reports_lengths = [[len(report) for report in record] for record in records]
+                records_sizes = [len(record) for record in records]
                 max_report_length = max([max(lengths) for lengths in reports_lengths])
                 max_record_size = max(records_sizes)
                 data = np.stack(                                                                        # stack records to create dataset
                     [
                         np.pad(                                                                         # pad record
                                 np.stack([                                                              # stack reports to create record
-                                    np.pad(report.astype(np.uint16)[report.astype(np.uint16) != 0], (0,max_report_length))[:max_report_length] # pad report
-                                    for report in record[col_name].values
+                                    np.pad(report, (0,max_report_length))[:max_report_length] # pad report
+                                    for report in record
                                     if (report.astype(np.uint16) != 0).sum() > 0
                                 ]
                             ), ((0,max_record_size),(0,0)))[:max_record_size]
-                        for record in dataframe
+                        for record in records
                     ]
                 )
                 return data # data.shape: (num_records, num_reports, num_tokens)
