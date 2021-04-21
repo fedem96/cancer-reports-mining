@@ -2,7 +2,7 @@ import copy
 import os
 import pickle
 import sys
-from ray.experimental.multiprocessing.pool import Pool
+from multiprocessing.pool import Pool
 
 import numpy as np
 import pandas as pd
@@ -20,7 +20,7 @@ from utils.utilities import replace_nulls, merge_and_extract, to_gpu_if_availabl
 
 class Dataset:
 
-    def __init__(self, directory, set_name, input_cols, token_codec_file_name=TOKEN_CODEC, idf_file_name=IDF, max_report_length=None):
+    def __init__(self, directory, set_name, input_cols, token_codec_file_name=TOKEN_CODEC, idf_file_name=IDF, max_report_length=None, max_record_size=None):
         self.directory = directory
         self.set_name = set_name
         self.csv_file = os.path.join(directory, set_name)
@@ -51,6 +51,7 @@ class Dataset:
         self.encoded_data_column = "encoded_data"
         replace_nulls(self.dataframe, {col: "" for col in input_cols})
         # self.add_encoded_column(self.full_pipe, self.encoded_data_column, max_report_length)
+        self.max_record_size = max_record_size
 
     def full_pipe(self, report):
         return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
@@ -69,7 +70,7 @@ class Dataset:
             try:
                 with Pool(6) as pool:
                     data = pool.map(pipeline, reports, chunksize=len(reports)//6)  # since pipeline is going to be pickled, I can't use a lambda
-            except (pickle.PicklingError, RuntimeError):
+            except (pickle.PicklingError, RuntimeError, Exception):
                 print("Cannot pickle pipeline, using sequential version", file=sys.stderr)
                 data = [pipeline(r) for r in reports]
             return data
@@ -143,7 +144,7 @@ class Dataset:
         return "unknown data type: '{}'".format(data_type)
 
     def get_data_as_tokens_indices(self, column_name):
-        def _get_data_as_tokens_indices(dataframe, col_name, function_name):  # function_name is required for caching
+        def _get_data_as_tokens_indices(dataframe, col_name, self_max_record_size, function_name):  # function_name is required for caching
             # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
             if type(dataframe) == list:
                 records = [[report.astype(np.uint16) for report in record[col_name].values] for record in dataframe]
@@ -152,6 +153,8 @@ class Dataset:
                 records_sizes = [len(record) for record in records]
                 max_report_length = max([max(lengths) for lengths in reports_lengths])
                 max_record_size = max(records_sizes)
+                if self_max_record_size is not None and self_max_record_size < max_record_size:
+                    max_record_size = self_max_record_size
                 data = np.stack(                                                                        # stack records to create dataset
                     [
                         np.pad(                                                                         # pad record
@@ -168,7 +171,7 @@ class Dataset:
             # without group by, each row is treated as a single-report record
             max_report_length = max([len(report) for report in dataframe[col_name].values])
             return np.expand_dims(np.stack([np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) for report in self.dataframe[col_name].values]), 1)
-        return caching(_get_data_as_tokens_indices)(self.dataframe, column_name, "get_data_as_tokens_indices")
+        return caching(_get_data_as_tokens_indices)(self.dataframe, column_name, self.max_record_size, "get_data_as_tokens_indices")
 
     def get_data_as_tfidf_vectors(self, column_name):
         def _get_data_as_tfidf_vectors(dataframe, col_name, function_name): # dataframe and function_name are required for caching

@@ -41,6 +41,8 @@ class Preprocessor:
         text = re.sub("grad(.?|ing)\s(iii|3|tre)", " g3", text)
         text = re.sub("grad(.?|ing)\s(ii|2|due)", " g2 ", text)
         text = re.sub("grad(.?|ing)\s(i|1|uno)", " g1 ", text)
+        for i in range(1, 6):
+            text = text.replace(" g {} ".format(i), " g{} ".format(i))
 
         # cerb: make the same token
         text = re.sub("c?\s?-?\s?erb\s?-?\s?b?\s?-?\s?2?", " cerb ", text)

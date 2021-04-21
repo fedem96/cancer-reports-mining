@@ -39,6 +39,7 @@ parser.add_argument("-ma", "--model-args", help="model to train", default=None, 
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)
+parser.add_argument("-ms", "--max-size", help="maximum size of the records (i.e. maximum reports per record)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
 parser.add_argument("-o", "--out", help="file where to save best values of the metrics", default=None, type=str) # TODO: add print best
 parser.add_argument("-opt", "--optimizer", help="name of the optimizer", default="Adam", type=str, choices=["Adam", "AdamW", "SGD"]) # TODO: finish to implement
@@ -67,8 +68,8 @@ def full_pipe(report):
 
 with Chronostep("encoding reports"):
     sets = {
-        "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, max_report_length=args.max_length),
-        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, max_report_length=args.max_length)
+        "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, max_report_length=args.max_length, max_record_size=args.max_size),
+        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, max_report_length=args.max_length, max_record_size=args.max_size)
     }
     training, validation = sets["train"], sets["val"]
 

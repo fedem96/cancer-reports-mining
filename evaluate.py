@@ -175,11 +175,16 @@ for var in classifications:
     if not os.path.exists(directory):
         os.makedirs(directory)
     y_pred = np.concatenate(y_preds[var])
-    show_confusion_matrix(labels[var].dropna().to_numpy().astype(int)[:len(y_pred)], y_pred, var +"\n", os.path.join(directory, "confusion_matrix.png"))
+    y_true = labels[var].dropna().to_numpy().astype(int)[:len(y_pred)]
+    with open(os.path.join(directory, "errors.json"), 'w') as errors_file:
+        errors = [dataset.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred != y_true)[0].tolist()]
+        json.dump(errors, errors_file)
+    show_confusion_matrix(y_true, y_pred, var +"\n", os.path.join(directory, "confusion_matrix.png"))
 
 for var in regressions:
     directory = os.path.join(evaluate_dir, var)
     if not os.path.exists(directory):
         os.makedirs(directory)
     y_pred = np.concatenate(y_preds[var])
-    show_regression_2Dkde(labels[var].dropna().to_numpy().astype(float)[:len(y_pred)], y_pred, var +"\n", os.path.join(directory, "pred_grth_density.png"))
+    y_true = labels[var].dropna().to_numpy().astype(float)[:len(y_pred)]
+    show_regression_2Dkde(y_true, y_pred, var +"\n", os.path.join(directory, "pred_grth_density.png"))

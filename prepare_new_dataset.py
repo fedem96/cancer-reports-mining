@@ -40,7 +40,7 @@ df.columns = df.columns.str.replace('_%', '')
 # df.drop(df[df["anno_referto"] != df["anno_diagnosi"]].index, inplace=True)
 df.drop(df[df["id_isto"] == 5068716].index, inplace=True)
 labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 'stadio_N', 'grading', 'dimensioni', 'recettori_estrogeni', 'recettori_progestin', 'numero_sentinella_asportati', 'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67']
-df.drop(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) == 14)].index, inplace=True)
+df.drop(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) >= 13)].index, inplace=True)
 
 ''' clean "sede_icdo3" column '''
 df["sede_icdo3"] = df["sede_icdo3"].apply(lambda s: s.upper())
@@ -62,13 +62,15 @@ df.loc[df.index[df["metastasi"].apply(lambda v: v in {"4", "9", "X"})], "metasta
 df["metastasi"] = df["metastasi"].astype("Int64")
 
 ''' clean "modalita_T" column '''
-df.loc[df.index[df["modalita_T"].apply(lambda v: v not in {"E", "R"})], "modalita_T"] = np.NaN
+# df.loc[df.index[df["modalita_T"].apply(lambda v: v not in {"E", "R"})], "modalita_T"] = np.NaN
+df.drop(df[df.modalita_T == "3"].index, inplace=True)
 
 ''' clean "modalita_N" column '''
-df.loc[df.index[df["modalita_N"].apply(lambda v: v not in {"E", "R"})], "modalita_N"] = np.NaN
+# df.loc[df.index[df["modalita_N"].apply(lambda v: v not in {"E", "R"})], "modalita_N"] = np.NaN
+df.drop(df[df.modalita_N == "6"].index, inplace=True)
 
 ''' clean "stadio_T" column '''
-df.loc[df.index[df["stadio_T"].apply(lambda v: v == "X" or v == "A")], "stadio_T"] = np.NaN
+df.loc[df.index[df["stadio_T"].apply(lambda v: v == "X" or v == "A")], "stadio_T"] = np.NaN              # TODO: decide whether to remove all rows
 df["stadio_T"] = df["stadio_T"].apply(lambda v: str(v).replace(" ", "").upper() if pd.notna(v) else None)
 
 ''' clean "stadio_N" column '''
