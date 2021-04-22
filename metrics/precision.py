@@ -1,13 +1,10 @@
-import numpy as np
-
 from metrics.base.metric import Metric
 
 
 class Precision(Metric):
-    def __init__(self, cls):
+    def __init__(self):
         super().__init__(max)
         self.reset()
-        self.cls = cls
 
     def reset(self):
         self.TP = 0
@@ -17,15 +14,9 @@ class Precision(Metric):
     def update(self, preds, grth):
         correct = preds == grth
         wrong = ~correct
-        for cls in np.unique(preds):
-            if cls != self.cls:
-                continue
-            self.TP += (correct & (preds == cls)).sum().item()
-            self.FP += (wrong & (preds == cls)).sum().item()
-        for cls in np.unique(grth):
-            if cls != self.cls:
-                continue
-            self.FN += (wrong & (grth == cls)).sum().item()
+        self.TP += (correct & (preds == 1)).sum().item()
+        self.FP += (wrong & (preds == 1)).sum().item()
+        self.FN += (wrong & (grth == 1)).sum().item()
 
     def __call__(self, *args, **kwargs):
         d = self.TP + self.FP

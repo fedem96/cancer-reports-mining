@@ -123,7 +123,8 @@ class MetricsLogger(Callback):
                     values.pop(0)
                 rows.append([metric, *values, str_best])
 
-            print(generate_table(rows, columns, grid_style=AlternatingRowGrid(Back.RESET, Back.LIGHTBLACK_EX)), end='')
+            if len(rows) > 0:
+                print(generate_table(rows, columns, grid_style=AlternatingRowGrid(Back.RESET, Back.LIGHTBLACK_EX)), end='')
 
     def _log_tensorboard(self, metrics_train, metrics_val):
         # for group in metrics_train:

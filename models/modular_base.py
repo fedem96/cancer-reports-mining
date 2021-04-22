@@ -20,6 +20,8 @@ from metrics.mae import MeanAbsoluteError
 from metrics.metrics import Metrics
 from metrics.m_f1 import MacroF1Score
 from metrics.nmae import NormalizedMeanAbsoluteError
+from metrics.precision import Precision
+from metrics.recall import Recall
 from utils.chrono import Chronometer
 
 
@@ -399,6 +401,8 @@ class ModularBase(nn.Module, ABC):
     def create_classifications_metrics(self, tasks):
         return {
             "Accuracy": {t['name']: Accuracy() for t in tasks},
+            "Precision": {t['name']: Precision() for t in tasks if t['num_classes'] == 2},
+            "Recall": {t['name']: Recall() for t in tasks if t['num_classes'] == 2},
             "F1": {t['name']: F1Score() for t in tasks if t['num_classes'] == 2},
             "M-F1": {t['name']: MacroF1Score() for t in tasks if t['num_classes'] > 2},
             "CKS": {t['name']: CohenKappaScore() for t in tasks},
