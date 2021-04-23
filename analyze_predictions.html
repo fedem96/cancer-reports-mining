@@ -45,10 +45,10 @@
 <body>
     <div id="app">
         <label for="predictionServer">Prediction Server</label>
-        <input id="predictionServer" v-model="predictionServerAddress" placeholder="IP:port">
+        <input id="predictionServer" v-model="predictionServerAddress" placeholder="IP:port" @change="fetchPredictorInfo">
         <br>
         <label for="dataServer">Data Server</label>
-        <input id="dataServer" v-model="dataServerAddress" placeholder="IP:port">
+        <input id="dataServer" v-model="dataServerAddress" placeholder="IP:port" @change="fetchDatasetInfo">
         <br>
         <label for="randomPatientBtn">Cartella di un paziente casuale</label>
         <button id="randomPatientBtn" @click="fetchRecordOfRandomPatient">Ottieni</button>
@@ -56,8 +56,8 @@
         <label for="specificPatientBtn">Cartella di un paziente preciso</label>
         <input id="patientId" v-model="id_paz" placeholder="patient id">
         <button id="specificPatientBtn" @click="fetchRecordOfPatient">Ottieni</button>
-        <br>{{dataset.dir}} {{dataset.set}}
-        <br>{{predictor.file}}
+        <br>{{dataset.dir}} {{dataset.set}} <span v-if="dataset.dir == undefined">dataset not connected</span>
+        <br>{{predictor.file}} <span v-if="predictor.file == undefined">predictor not connected</span>
         <!-- <line-chart :data="chartData" :options="chartOptions"></line-chart> -->
         <div>
             Paziente {{id_paz}}
@@ -195,9 +195,11 @@
         },
         methods: {
             fetchDatasetInfo(){
+                this.dataset = {};
                 fetch("http://" + this.dataServerAddress + "/info").then(response => response.json().then(data => this.setDatasetInfo(data.dataset, data.set)));
             },
             fetchPredictorInfo(){
+                this.predictor = {};
                 fetch("http://" + this.predictionServerAddress + "/info").then(response => response.json().then(data => this.setPredictorInfo(data.model)));
             },
             fetchRecordOfRandomPatient() {
@@ -301,7 +303,7 @@
                 }
 
                 for (let rVar in regressionsPredictions){
-                    this.regressions[rVar].predictions = regressionsPredictions[rVar];
+                    this.regressions[rVar].prediction = regressionsPredictions[rVar];
                 }
 
                 this.$forceUpdate();
