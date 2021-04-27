@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from layers.positional_encoding import PositionalEncoding
-from models.modular_base import ModularBase
+from models.nn.modular_base import ModularBase
 
 
 class Transformer(ModularBase):

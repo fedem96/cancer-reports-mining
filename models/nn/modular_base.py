@@ -26,7 +26,7 @@ from utils.chrono import Chronometer
 
 
 class ModularBase(nn.Module, ABC):
-    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, token_codec, labels_codec, *args, **kwargs):
+    def __init__(self, modules_dict, deep_features, model_name, preprocessor, tokenizer, labels_codec, *args, **kwargs):
         super(ModularBase, self).__init__()
         self.__name__ = model_name
         self.net = nn.ModuleDict(OrderedDict({
@@ -36,7 +36,6 @@ class ModularBase(nn.Module, ABC):
 
         self.preprocessor = preprocessor
         self.tokenizer = tokenizer
-        self.token_codec = token_codec
         self.labels_codec = labels_codec
 
         self.deep_features = deep_features
@@ -56,9 +55,6 @@ class ModularBase(nn.Module, ABC):
 
         self.optimizer = None
 
-        self.classification_metrics = ["Accuracy", "M-F1", "CKS", "DBCS"]
-        self.regression_metrics = ["MAE", "NMAE"]
-
         self.tokens_pooler = None
         self.reports_pooler = None
         self.predictions_pooler = {}
@@ -70,7 +66,7 @@ class ModularBase(nn.Module, ABC):
         self.validation_tasks = {}
 
     def encode_report(self, report):
-        return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
+        return self.tokenizer.tokenize(self.preprocessor.preprocess(report), encode=True)
 
     def set_tokens_pooling_method(self, pool_mode: str, **pool_args):
         if pool_mode is None:
@@ -184,6 +180,8 @@ class ModularBase(nn.Module, ABC):
             self.num_classes[var] = len(classes_occurrences)
             assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
             classes_weights = 1 / classes_occurrences
+            if var == "modalita_T":
+                classes_weights *= classes_weights
             classes_weights = torch.from_numpy(classes_weights).float().to(self.current_device())
             self.losses[var] = nn.CrossEntropyLoss(classes_weights)
             self.training_tasks[var]["highest_frequency"] = max(classes_occurrences) / sum(classes_occurrences)

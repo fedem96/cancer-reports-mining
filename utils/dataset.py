@@ -1,5 +1,4 @@
 import copy
-import os
 import pickle
 import sys
 from multiprocessing.pool import Pool
@@ -10,17 +9,16 @@ import torch
 
 from utils.cache import caching
 from utils.constants import *
-from utils.idf import InverseFrequenciesCounter
 from utils.labels_codec import LabelsCodecFactory
 from utils.preprocessing import Preprocessor
 from utils.serialization import load
-from utils.tokenizing import Tokenizer, TokenCodec
+from tokenizing.tokenizer import Tokenizer
 from utils.utilities import replace_nulls, merge_and_extract, to_gpu_if_available
 
 
 class Dataset:
 
-    def __init__(self, directory, set_name, input_cols, token_codec_file_name=TOKEN_CODEC, idf_file_name=IDF, max_report_length=None, max_record_size=None):
+    def __init__(self, directory, set_name, input_cols, tokenizer_file_name, max_report_length=None, max_record_size=None):
         self.directory = directory
         self.set_name = set_name
         self.csv_file = os.path.join(directory, set_name)
@@ -43,9 +41,7 @@ class Dataset:
         self.encoded_data_column = None
 
         self.preprocessor = Preprocessor.get_default()
-        self.tokenizer = Tokenizer()
-        self.token_codec = TokenCodec().load(os.path.join(directory, token_codec_file_name))
-        self.idf = InverseFrequenciesCounter().load(os.path.join(directory, idf_file_name))
+        self.tokenizer = Tokenizer().load(os.path.join(directory, tokenizer_file_name))
 
         self.max_report_length = max_report_length
         self.encoded_data_column = "encoded_data"
@@ -53,15 +49,20 @@ class Dataset:
         # self.add_encoded_column(self.full_pipe, self.encoded_data_column, max_report_length)
         self.max_record_size = max_record_size
 
+        if self.tokenizer.num_tokens() >= 2 ** 15:
+            if self.tokenizer.num_tokens() >= 2 ** 16:
+                raise ValueError(f"ERROR: too much tokens for 16 bit: {self.tokenizer.num_tokens()} (maximum is {2**16-1})")
+            print("WARNING: some token will be negative in pytorch because of lacking of torch.uint16", file=sys.stderr)
+
     def full_pipe(self, report):
-        return self.token_codec.encode(self.tokenizer.tokenize(self.preprocessor.preprocess(report)))
+        return self.tokenizer.tokenize(self.preprocessor.preprocess(report), encode=True)
 
     def add_encoded_column(self, full_pipe, new_column_name, max_length=None):
 
         if len(self.input_cols) == 0:
             raise Exception("input columns not set")
 
-        def _df_to_data(dataframe, pipeline, cols):
+        def _df_to_data(dataframe, pipeline, cols, *args):
             if type(dataframe) == list:
                 return [_df_to_data(d, pipeline, cols) for d in dataframe]
 
@@ -75,7 +76,7 @@ class Dataset:
                 data = [pipeline(r) for r in reports]
             return data
 
-        new_column = caching(_df_to_data)(self.dataframe, full_pipe, self.input_cols)
+        new_column = caching(_df_to_data)(self.dataframe, full_pipe, self.input_cols, self.tokenizer.n_grams, self.tokenizer.codec.num_tokens())
         if type(self.dataframe) == list:
             for df, new_col in zip(self.dataframe, new_column):
                 df[new_column_name] = new_col
@@ -148,7 +149,7 @@ class Dataset:
             # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
             if type(dataframe) == list:
                 records = [[report.astype(np.uint16) for report in record[col_name].values] for record in dataframe]
-                records = [[report[report != 0] for report in record if len(report[report != 0]) > 0] for record in records]
+                records = [[report[report != 0] if len(report[report != 0]) > 0 else np.array([0]) for report in record] for record in records]
                 reports_lengths = [[len(report) for report in record] for record in records]
                 records_sizes = [len(record) for record in records]
                 max_report_length = max([max(lengths) for lengths in reports_lengths])
@@ -161,8 +162,8 @@ class Dataset:
                                 np.stack([                                                              # stack reports to create record
                                     np.pad(report, (0,max_report_length))[:max_report_length] # pad report
                                     for report in record
-                                    if (report.astype(np.uint16) != 0).sum() > 0
-                                ]
+                                    if (report != 0).sum() > 0
+                                ] + [np.zeros((max_report_length), dtype=np.uint16)]
                             ), ((0,max_record_size),(0,0)))[:max_record_size]
                         for record in records
                     ]
@@ -183,17 +184,17 @@ class Dataset:
             tokens_values = []
             for record_index, encoded_record in enumerate(indices_data):
                 non_padding_reports = encoded_record.sum(axis=1) != 0
-                record = self.token_codec.decode_ndarray(encoded_record[non_padding_reports])
+                record = self.tokenizer.decode_ndarray(encoded_record[non_padding_reports])
                 for report_non_padding_index, report_original_index in enumerate(np.where(non_padding_reports)[0]):
                     report = record[report_non_padding_index]
                     for token in report:
                         if token != "":
                             records_indexes.append(record_index)
                             reports_indexes.append(report_original_index.item())
-                            tokens_indexes.append(self.token_codec.encode_token(token))
-                            tokens_values.append(self.idf.get_idf(token))
+                            tokens_indexes.append(self.tokenizer.encode_token(token))
+                            tokens_values.append(self.tokenizer.get_idf(token, encode=True))
             indexes = [records_indexes, reports_indexes, tokens_indexes]
-            return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.token_codec.num_tokens()+1))
+            return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.tokenizer.num_tokens()+1))
         return caching(_get_data_as_tfidf_vectors)(self.dataframe, column_name, "get_data_as_tfidf_vectors")
 
     def group_by(self, attributes):

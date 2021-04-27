@@ -58,7 +58,7 @@ def predict_API():
         reports = request.args.getlist('report')
     predictions = predict(reports)
     tokens = tokenize(reports)
-    tokens_indices = [tokens_array.tolist() for tokens_array in model.token_codec.encode_batch(tokens)]
+    tokens_indices = [tokens_array.tolist() for tokens_array in model.tokenizer.encode_batch(tokens)]
     return jsonify({
         **{k: v.cpu().tolist() for k,v in predictions.items() if k in {"reports_importance", "tokens_importance"}},
         "classifications": {k: {model.labels_codec[k].decode(i): v for i,v in enumerate(v.cpu().squeeze().softmax(0).tolist())} for k,v in predictions.items() if k in model.get_validation_classifications()},
@@ -71,7 +71,7 @@ def predict_API():
 
 def predict(reports):
     # reports_tensor = model.tensorize(reports) # TODO: !
-    reports = model.token_codec.encode_batch(model.tokenizer.tokenize_batch(model.preprocessor.preprocess_batch(reports)))
+    reports = model.tokenizer.tokenize_batch(model.preprocessor.preprocess_batch(reports), encode=True)
     reports_tensor = torch.tensor(numpyze([reports]).astype(np.int16), device=model.current_device())
     if all(reports_tensor.flatten() == 0):
         return {}

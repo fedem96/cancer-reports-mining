@@ -13,7 +13,6 @@ from utils.utilities import *
 parser = argparse.ArgumentParser(description='Train a model')
 parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0, type=float)
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=128, type=int)
-parser.add_argument("-c", "--codec", help="token codec filename", default=TOKEN_CODEC, type=str)
 parser.add_argument("-cp", "--copy", help="copy columns", default=[], nargs="+", type=str)
 parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each classifier", default=0, type=float)
 parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
@@ -28,7 +27,6 @@ parser.add_argument("-fa", "--filter-args", help="args for report filtering stra
 parser.add_argument("-gb", "--group-by", help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-grl", "--gradient-reversal-lambda", help="value of lambda for each Gradient Reversal Layer", default=0.05, type=float)
-parser.add_argument("-i", "--idf", help="Inverse Document Frequencies filename", default=IDF, type=str)
 parser.add_argument("-ic", "--input-cols", help="list of input columns names", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-lrs", "--learning-rate-scheduler", help="type of learning rate scheduler", default=None, type=str, choices=["StepLR"]) # TODO: complete
@@ -36,6 +34,7 @@ parser.add_argument("-lrsa", "--learning-rate-scheduler-args", help="args for le
 parser.add_argument("-lp", "--labels-preprocessing", help="how to preprocess the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
+parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,6))
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)
@@ -64,19 +63,19 @@ with Chronostep("reading input"):
 
 
 def full_pipe(report):
-    return tc.encode(t.tokenize(p.preprocess(report)))
+    return t.tokenize(p.preprocess(report), encode=True)
 
 with Chronostep("encoding reports"):
+    tokenizer_file_name = f"tokenizer-{args.n_grams}gram.json"
     sets = {
-        "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, max_report_length=args.max_length, max_record_size=args.max_size),
-        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, max_report_length=args.max_length, max_record_size=args.max_size)
+        "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size),
+        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size)
     }
     training, validation = sets["train"], sets["val"]
 
     for set_name in ["train", "val"]:
         dataset = sets[set_name]
 
-        tc = dataset.token_codec
         t = dataset.tokenizer
         p = dataset.preprocessor
         dataset.add_encoded_column(full_pipe, dataset.encoded_data_column, dataset.max_report_length)
@@ -148,8 +147,8 @@ with Chronostep("creating model"):
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
     model_args = {
-        "vocab_size": training.token_codec.num_tokens()+1, "preprocessor": training.preprocessor, "tokenizer": training.tokenizer,
-        "token_codec": training.token_codec, "labels_codec": training.get_labels_codec(), "idf": training.idf
+        "vocab_size": training.tokenizer.num_tokens()+1, "preprocessor": training.preprocessor, "tokenizer": training.tokenizer,
+        "labels_codec": training.get_labels_codec(), "directory": model_dir
     }
     if args.model_args is not None:
         model_args.update(args.model_args)

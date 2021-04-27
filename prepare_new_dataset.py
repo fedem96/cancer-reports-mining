@@ -1,23 +1,17 @@
 import argparse
 import json
 import re
-from collections import defaultdict
 
 from matplotlib import pyplot as plt
-import numpy as np
-import pandas as pd
 from pandasql import sqldf
 
 from utils.constants import *
-from utils.idf import InverseFrequenciesCounter
 from utils.preprocessing import Preprocessor
-from utils.tokenizing import TokenCodecCreator
+from tokenizing.tokenizer import Tokenizer
 from utils.utilities import *
 
 
 parser = argparse.ArgumentParser(description='Clean and prepare the new dataset (the one with breast and colon cancer types only)')
-parser.add_argument("-c", "--codec", help="filename where to save the token codec", default=TOKEN_CODEC, type=str)
-parser.add_argument("-i", "--idf", help="filename where to save Inverse Document Frequencies", default=IDF, type=str)
 parser.add_argument("-s", "--stats", help="subdirectory where to save the statistics", default=STATS, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-q", "--quick", help="skip unnecessary checks", default=False, action='store_true')
@@ -34,13 +28,22 @@ print("cleaning data")
 df.drop(df.filter(regex="Unname"), axis=1, inplace=True)
 ''' rename columns with invalid name '''
 df.columns = df.columns.str.replace('_%', '')
-
+# undesired_words = [' cervic', ' colon', ' endometri', ' fegato', ' intestin', ' ovai', ' pancrea', ' papillar', ' polmonar', ' renal', ' rettal', ' stomac', ' tiroid', ' urotelial', ' uter', ' vagin', ' vescic', ' vulv', 'pap test']
+# df.drop(df[df.diagnosi.apply(lambda x: any([uw in str(x).lower() for uw in undesired_words]))].index, inplace=True)
+# df.drop(df[df.macroscopia.apply(lambda x: any([uw in str(x).lower() for uw in undesired_words]))].index, inplace=True)
+# df.drop(df[df.notizie.apply(lambda x: any([uw in str(x).lower() for uw in undesired_words]))].index, inplace=True)
 
 ''' remove invalid rows '''
 # df.drop(df[df["anno_referto"] != df["anno_diagnosi"]].index, inplace=True)
-df.drop(df[df["id_isto"] == 5068716].index, inplace=True)
+df.drop(df[df["id_paz"] == 2395494].index, inplace=True)
+
+''' remove duplicated reports '''
+df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False)
+
+''' remove rows with too many missing values '''
 labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 'stadio_N', 'grading', 'dimensioni', 'recettori_estrogeni', 'recettori_progestin', 'numero_sentinella_asportati', 'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67']
-df.drop(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) >= 13)].index, inplace=True)
+patients_with_too_many_missing_labels = set(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) >= 14)].id_paz.unique())
+df.drop(df[df.id_paz.isin(patients_with_too_many_missing_labels)].index, inplace=True)
 
 ''' clean "sede_icdo3" column '''
 df["sede_icdo3"] = df["sede_icdo3"].apply(lambda s: s.upper())
@@ -90,9 +93,7 @@ df.loc[mask_invalid_rows, "numero_sentinella_asportati"] = np.NaN
 df.loc[mask_invalid_rows, "numero_sentinella_positivi"] = np.NaN
 
 ''' clean "grading" column '''
-df.loc[df.index[df["grading"] == "A"], "grading"] = np.NaN
-df.loc[df.index[df["grading"] == "B"], "grading"] = np.NaN
-df.drop(df[df["grading"] == "0"].index, inplace=True)
+df.drop(df[df.id_paz.isin(set(df[df.grading.apply(lambda g: g in {"0", "A", "B"})].id_paz.unique()))].index, inplace=True)
 
 ''' clean "mib1", "cerb" and "ki67" columns '''
 pos_regex = re.compile("p.*o.*s", re.I)
@@ -119,9 +120,6 @@ replace_nulls(df, {col: "" for col in input_cols})
 for col in input_cols:
     df[col] = df[col].apply(lambda text: text.strip())
 df.drop(df[(df["diagnosi"] == "") & (df["macroscopia"] == "")].index, inplace=True)
-
-print("solving ambiguities")
-df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False) # TODO
 
 if args.quick:
     print("quick flag enabled: skipping checks on data validity")
@@ -158,28 +156,30 @@ dfTrain = df[df['id_paz'].isin(trainPatients)].copy()
 dfVal = df[df['id_paz'].isin(valPatients)].copy()
 dfTest = df[df['id_paz'].isin(testPatients)].copy()
 
+dfTrain.drop(dfTrain[dfTrain.anno_referto != dfTrain.anno_diagnosi].index, inplace=True)
+
 # total:      25184 patients                                                                      115865 reports
 # train:      17565 patients (69.75%) without reports neither in 2014 nor in 2015                  77862 reports
 # validation:  3783 patients (15.02%) with at least one report in 2014 (but not in 2015)           18994 reports
 # test:        3836 patients (15.23%) with at least one report in 2015                             19009 reports
 
-print("generating codec")
+print("generating tokenizers")
+p = Preprocessor.get_default()
 replace_nulls(dfTrain, {col: "" for col in input_cols})
-texts = merge_and_extract(dfTrain, input_cols)
-tc = TokenCodecCreator().create_codec(texts, min_occurrences=30)
-tc.save(os.path.join(args.dataset_dir, args.codec))
-
-print("generating idf")
-InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))
+texts = p.preprocess_batch(merge_and_extract(dfTrain, input_cols))
+tknzrs = []
+for n in range(1,6):
+    print(f"creating tokenizer with {n}-gram codec")
+    t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=10).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
+    tknzrs.append(t)
 
 print("removing rows with no tokens")
-p = Preprocessor.get_default()
 replace_nulls(dfVal, {col: "" for col in input_cols})
 replace_nulls(dfTest, {col: "" for col in input_cols})
 dfTrain = dfTrain.reset_index(drop=True)
 dfVal = dfVal.reset_index(drop=True)
 dfTest = dfTest.reset_index(drop=True)
-dfTrain.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(texts)]))[0], inplace=True)
+dfTrain.drop(np.where(np.array([len(text)==0 for text in texts]))[0], inplace=True)
 dfVal.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(merge_and_extract(dfVal, input_cols))]))[0], inplace=True)
 dfTest.drop(np.where(np.array([len(text)==0 for text in p.preprocess_batch(merge_and_extract(dfTest, input_cols))]))[0], inplace=True)
 
@@ -199,7 +199,7 @@ images_dirs = [stats_dir] + [os.path.join(stats_dir, str(year)) for year in year
 for dataframe, images_dir in zip(dataframes, images_dirs):
     if not os.path.exists(images_dir): os.makedirs(images_dir)
     dataframe[set(dataframe.columns) - set(input_cols) - {"id_paz", "id_isto", "anno_diagnosi", "anno_referto"}].notnull().mean().sort_index().plot(kind="bar")
-    plt.title("frazione valori non nulli")
+    plt.title("fraction of non-missing values")
     plt.tight_layout()
     plt.savefig(os.path.join(images_dir, "notnull-bar.png"))
     plt.clf()

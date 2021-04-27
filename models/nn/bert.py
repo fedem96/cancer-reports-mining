@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from transformers import BertModel, BertConfig
 
-from models.modular_base import ModularBase
+from models.nn.modular_base import ModularBase
 
 
 class Bert(ModularBase):

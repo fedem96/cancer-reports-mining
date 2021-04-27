@@ -1,19 +1,13 @@
 import argparse
-import os
 
-import pandas as pd
-from pandasql import sqldf
-
+from tokenizing.tokenizer import Tokenizer
 from utils.constants import *
-from utils.idf import InverseFrequenciesCounter
-from utils.tokenizing import TokenCodecCreator
+from utils.preprocessing import Preprocessor
 from utils.utilities import *
 
 
 parser = argparse.ArgumentParser(description='Clean and prepare the old dataset (the one with all cancer types)')
-parser.add_argument("-c", "--codec", help="filename where to save the token codec", default=TOKEN_CODEC, type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory for the cleaned dataset", default=os.path.join(DATASETS_DIR, OLD_DATASET), type=str)
-parser.add_argument("-i", "--idf", help="filename where to save Inverse Document Frequencies", default=IDF, type=str)
 parser.add_argument("-hist", "--histologies", help="histologies file", default=OLD_HISTOLOGIES_FILE, type=str)
 parser.add_argument("-neop", "--neoplasms", help="neoplasms file", default=OLD_NEOPLASMS_FILE, type=str)
 args = parser.parse_args()
@@ -63,9 +57,11 @@ dfTest.to_csv(os.path.join(args.dataset_dir, TEST_SET), index=False)
 dfUnsup.to_csv(os.path.join(args.dataset_dir, UNSUPERVISED_SET), index=False)
 
 
-print("generating codec")
-texts = merge_and_extract(dfTrain, input_cols)
-TokenCodecCreator().create_codec(texts).save(os.path.join(args.dataset_dir, args.codec))
-
-print("generating idf")
-InverseFrequenciesCounter().train(texts).save(os.path.join(args.dataset_dir, args.idf))
+print("generating tokenizers")
+p = Preprocessor.get_default()
+texts = p.preprocess_batch(merge_and_extract(dfTrain, input_cols))
+tknzrs = []
+for n in range(1,6):
+    print(f"creating tokenizer with {n}-gram codec")
+    t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=10).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
+    tknzrs.append(t)

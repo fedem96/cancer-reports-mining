@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from models.modular_base import ModularBase
+from models.nn.modular_base import ModularBase
 
 
 class MultiLayerPerceptron(ModularBase):

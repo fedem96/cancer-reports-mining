@@ -26,17 +26,20 @@ def caching(function):
             else:
                 return str(o)
 
-        hex_digest = hashlib.sha256(bytes(str([_obj_to_hex(arg) for arg in args]), "utf-8")).hexdigest()
+        args_to_hash = (function.__module__, function.__name__, function.__qualname__, *args)
+        hex_digest = hashlib.sha256(bytes(str([_obj_to_hex(arg) for arg in args_to_hash]), "utf-8")).hexdigest()
 
         file_cache = os.path.join(CACHE_DIR, hex_digest)
         if not os.path.exists(file_cache):
-            print("calculating result")
+            print(f"calculating result for function {function.__qualname__}...", end="")
             result = function(*args)
             with open(file_cache, "wb") as file:
                 pickle.dump(result, file)
+            print(f"\rcalculated result for function {function.__qualname__}    ")
         else:
-            print("loading result from cache")
+            print(f"loading result from cache for function {function.__qualname__}...", end="")
             with open(file_cache, "rb") as file:
                 result = pickle.load(file)
+            print(f"\rloaded result from cache for function {function.__qualname__}    ")
         return result
     return wrapped_function

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from models.modular_base import ModularBase
+from models.nn.modular_base import ModularBase
 
 
 class EmbMaxLin(ModularBase):
