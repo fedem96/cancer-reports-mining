@@ -6,6 +6,7 @@ import sys
 from graphviz import Source
 import numpy as np
 from sklearn import tree
+from sklearn.tree._tree import TREE_LEAF
 
 from utils.convert import sparse_tensor_to_csr_matrix
 
@@ -79,6 +80,13 @@ class DecisionTree:
         g.format = 'pdf'
         g.render(os.path.join(self.directory, "tree"), view=True)
 
+        prune_duplicate_leaves(self.model)
+
+        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
+        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
+        g.format = 'pdf'
+        g.render(os.path.join(self.directory, "simplified_tree"), view=True)
+
         print("evaluating train")
         train_metrics = self.evaluate(train_data, train_labels)
         print(train_metrics)
@@ -117,3 +125,34 @@ class DecisionTree:
             "M-F1":        sum([v for k,v in metrics.items() if "F1"        in k]) / len(classes)
         })
         return metrics
+
+
+def is_leaf(inner_tree, index):
+    # Check whether node is leaf node
+    return (inner_tree.children_left[index] == TREE_LEAF and inner_tree.children_right[index] == TREE_LEAF)
+
+
+def prune_duplicate_leaves(model):
+    # Remove leaves if both
+    decisions = model.tree_.value.argmax(axis=2).flatten().tolist() # Decision for each node
+    _prune_index(model.tree_, decisions)
+
+
+def _prune_index(tree, decisions, index=0):
+    # Start pruning from the bottom - if we start from the top, we might miss
+    # nodes that become leaves during pruning.
+    # Do not use this directly - use prune_duplicate_leaves instead.
+    if not is_leaf(tree, tree.children_left[index]):
+        _prune_index(tree, decisions, tree.children_left[index])
+    if not is_leaf(tree, tree.children_right[index]):
+        _prune_index(tree, decisions, tree.children_right[index])
+
+    # Prune children if both children are leaves now and make the same decision:
+    if (is_leaf(tree, tree.children_left[index]) and
+        is_leaf(tree, tree.children_right[index]) and
+        (decisions[index] == decisions[tree.children_left[index]]) and
+        (decisions[index] == decisions[tree.children_right[index]])):
+        # turn node into a leaf by "unlinking" its children
+        tree.children_left[index] = TREE_LEAF
+        tree.children_right[index] = TREE_LEAF
+        ##print("Pruned {}".format(index))

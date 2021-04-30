@@ -12,7 +12,12 @@ class Tokenizer:
 
     def __init__(self, tokenizer='it', n_grams=1, num_docs=None, codec=None):
         self._tknzr = spacy.load(tokenizer, disable=["tagger", "parser", "ner"])
-        self._tknzr.add_pipe(lambda doc: [" ".join([str(doc[i+j]) for j in range(min(n_grams, len(doc)))]) for i in range(len(doc)+1-n_grams)]) # str(doc[i+j]) can be replaced with doc[i+j].lemma_ to get the lemma
+        def extract_tokens(doc, n_grams_max=n_grams):
+            tokens = []
+            for n in range(1, n_grams_max+1):
+                tokens += [" ".join([str(doc[i + j]) for j in range(min(n, len(doc)))]) for i in range(len(doc) + 1 - n)] # str(doc[i+j]) can be replaced with doc[i+j].lemma_ to get the lemma
+            return tokens
+        self._tknzr.add_pipe(extract_tokens)
         self.spacy_tokenizer = tokenizer
         self.n_grams = n_grams
         self.codec = codec

@@ -121,6 +121,15 @@ class Dataset:
             self.dataframe[column] = self.labels_codec[column].encode_batch(self.dataframe[column])
         self._update_nunique()
 
+    def remove_examples_without_labels(self):
+        mask = np.ones(len(self.dataframe)).astype(bool)
+        for column in self.classifications:
+            mask = mask & self.dataframe[column].isna().values
+        for column in self.regressions:
+            mask = mask & self.dataframe[column].isna().values
+
+        self.dataframe.drop(self.dataframe[mask].index, inplace=True)
+
     def get_labels_columns(self):
         return self.classifications + self.regressions
 

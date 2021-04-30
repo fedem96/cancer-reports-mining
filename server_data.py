@@ -13,12 +13,14 @@ app = Flask(__name__)
 CORS(app)
 
 parser = argparse.ArgumentParser(description='Get reports from http server')
+parser.add_argument("-ic", "--input-cols", help="list of input columns names", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 parser.add_argument("-gb", "--group-by",
                     help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-id", "--id-column", help="identifier column name", default=None, type=str, required=True)
+parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,6))
 parser.add_argument("-p", "--port", help="port to listen on", default=None, type=int)
 parser.add_argument("-s", "--set", help="set of the dataset", choices=["training", "validation", "test"], default="validation", type=str)
 args = parser.parse_args()
@@ -27,11 +29,11 @@ if args.group_by is None:
     print("at the moment, only group by is supported")
     exit(0)
 
-input_cols = ["diagnosi", "macroscopia", "notizie"]
 classifications_labels_cols = ["grading", "metastasi", "modalita_N", "modalita_T", "morfologia_icdo3", "sede_icdo3", "stadio_N", "stadio_T", "tipo_T"]
 regressions_labels_cols = ["cerb", "dimensioni","ki67", "mib1", "numero_sentinella_asportati", "numero_sentinella_positivi", "recettori_estrogeni", "recettori_progestin"]
 
-dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols)
+tokenizer_file_name = f"tokenizer-{args.n_grams}gram.json"
+dataset = Dataset(args.dataset_dir, args.set + "_set.csv", args.input_cols, tokenizer_file_name)
 
 if args.group_by is not None:
     dataset.lazy_group_by(args.group_by)
@@ -72,7 +74,7 @@ def get_record_of_patient(patient_id):
     return jsonify({
         "id_paz": patient_id,
         "reports": [
-            {col: report[1][col] for col in input_cols}
+            {col: report[1][col] for col in args.input_cols}
             for report in record.iterrows()
         ],
         "classifications_labels": {

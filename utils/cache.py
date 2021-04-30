@@ -1,7 +1,7 @@
 import hashlib
 import os
 import pickle
-from inspect import signature
+from inspect import signature, getsource
 
 from utils.constants import CACHE_DIR
 
@@ -15,7 +15,7 @@ def caching(function):
 
         def _obj_to_hex(o):
             if callable(o):
-                return "&".join([o.__module__, o.__name__, o.__qualname__, str(signature(o)), str(o.__defaults__), str(o.__kwdefaults__)])
+                return "&".join([o.__module__, o.__name__, o.__qualname__, str(signature(o)), str(getsource(o)), str(o.__defaults__), str(o.__kwdefaults__)])
             elif type(o) == dict:
                 return str(o)
             elif hasattr(o, "__iter__"):

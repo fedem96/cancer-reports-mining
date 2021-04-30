@@ -92,6 +92,8 @@ with Chronostep("encoding reports"):
 
         dataset.encode_labels()
 
+        dataset.remove_examples_without_labels()
+
         if args.group_by is not None:
 
             dataset.lazy_group_by(args.group_by)
@@ -109,7 +111,7 @@ with Chronostep("encoding reports"):
 
     # training.limit(16840)
     # validation.limit(2048)
-
+print(f"number of tokens: {training.tokenizer.num_tokens()}")
 with Chronostep("getting labels"):
     training_labels = training.get_labels()
     validation_labels = validation.get_labels()
