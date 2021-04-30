@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 import re
@@ -74,18 +75,8 @@ class DecisionTree:
 
         self.model.fit(train_data, train_labels)
 
-        # show learned tree
-        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
-        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
-        g.format = 'pdf'
-        g.render(os.path.join(self.directory, "tree"), view=True)
-
-        prune_duplicate_leaves(self.model)
-
-        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
-        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
-        g.format = 'pdf'
-        g.render(os.path.join(self.directory, "simplified_tree"), view=True)
+        if importlib.util.find_spec('graphviz'):
+            self.save_pdf()
 
         print("evaluating train")
         train_metrics = self.evaluate(train_data, train_labels)
@@ -125,6 +116,19 @@ class DecisionTree:
             "M-F1":        sum([v for k,v in metrics.items() if "F1"        in k]) / len(classes)
         })
         return metrics
+
+    def save_pdf(self):
+        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
+        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
+        g.format = 'pdf'
+        g.render(os.path.join(self.directory, "tree"))
+
+        prune_duplicate_leaves(self.model)
+
+        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
+        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
+        g.format = 'pdf'
+        g.render(os.path.join(self.directory, "simplified_tree"))
 
 
 def is_leaf(inner_tree, index):
