@@ -41,7 +41,7 @@ class Tokenizer:
             json.dump(self.to_json(), file)
         return self
 
-    def create_codec(self, texts, min_occurrences=0, max_occurrences=None):
+    def create_codec(self, texts, min_occurrences=None, max_occurrences=None):
         encoder = {}
         decoder = {}
         found_tokens = set()
@@ -51,11 +51,20 @@ class Tokenizer:
         for tokens in tokens_batch:
             for token in set(tokens):
                 occurrences_dict[token] += 1
-                if occurrences_dict[token] >= min_occurrences and token not in found_tokens:
-                    found_tokens.add(token)
+                found_tokens.add(token)
+
+        if type(min_occurrences) == float:
+            assert 0 <= min_occurrences <= 1
+            min_occurrences = int(min_occurrences * len(texts))
+
+        if type(max_occurrences) == float:
+            assert 0 <= max_occurrences <= 1
+            max_occurrences = int(max_occurrences * len(texts))
+
+        assert min_occurrences is None or max_occurrences is None or min_occurrences <= max_occurrences
 
         for token in found_tokens:
-            if max_occurrences is None or occurrences_dict[token] <= max_occurrences:
+            if (min_occurrences is None or occurrences_dict[token] >= min_occurrences) and (max_occurrences is None or occurrences_dict[token] <= max_occurrences):
                 count += 1
                 encoder[token] = count
                 decoder[count] = token
