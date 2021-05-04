@@ -1,4 +1,5 @@
 import re
+import string
 
 
 class Preprocessor:
@@ -18,7 +19,8 @@ class Preprocessor:
         text = re.sub(r"\{\*?\\[^{}]+}|[{}]|\\\n?[A-Za-z]+\n?(?:-?\d+)?[ ]?", " ", text)
         # TODO: not all RTF-originated characters are removed
 
-        text = re.sub("ï¿½", "", text)      # remove this corrupted character
+        # remove all invalid characters: accented letters, strange characters originated by a bad encoding...
+        text = re.sub(r"[^0-9a-z\s" + string.punctuation + "]", "", text)
 
         # change '\dx\d' with '\d x \d'
         new_text = ""
@@ -30,7 +32,7 @@ class Preprocessor:
             s = re.search("\dx\d", text)
         text = new_text + text
 
-        for c in '!"#€$%()*+,-./:;<=>?@[\\]^_`{|}~&':  # spaces around punctuation
+        for c in string.punctuation:  # spaces around punctuation
             text = re.sub(re.escape(c), " " + c + " ", text)
 
         text = re.sub("\s{2,}", " ", text)  # remove double whitespaces
@@ -44,12 +46,24 @@ class Preprocessor:
         for i in range(1, 6):
             text = text.replace(" g {} ".format(i), " g{} ".format(i))
 
+        # stadio_N
+        text = re.sub("(n\d)", r" \1 ", text)
+
+        # stadio_T
+        text = re.sub("(t\d)", r" \1 ", text)
+
+        # tipo_T
+        # text = text.replace("yp", " yp ") # with this replace is worse # TODO: investigate
+
         # cerb: make the same token
         text = re.sub("c?\s?-?\s?erb\s?-?\s?b?\s?-?\s?2?", " cerb ", text)
-        text = re.sub("her\s?-?\s?2?", " cerb ", text)
+        text = re.sub("\sher\s?-?\s?2?", " cerb ", text)
 
         # ki67: make the same token
         text = re.sub("ki\s?-?\s?67", " ki67 ", text)
+
+        # mib1: make the same token
+        text = re.sub("\smib?\s?-?\s?1", " mib1 ", text)
 
         text = re.sub("\s{2,}", " ", text)  # remove (again) double whitespaces
 
