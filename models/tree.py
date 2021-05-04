@@ -4,7 +4,6 @@ import os
 import re
 import sys
 
-from graphviz import Source
 import numpy as np
 from sklearn import tree
 from sklearn.tree._tree import TREE_LEAF
@@ -118,6 +117,7 @@ class DecisionTree:
         return metrics
 
     def save_pdf(self):
+        from graphviz import Source
         print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
         g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
         g.format = 'pdf'
@@ -125,7 +125,7 @@ class DecisionTree:
 
         prune_duplicate_leaves(self.model)
 
-        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
+        print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model))) # after simplification, this print is not accurate
         g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
         g.format = 'pdf'
         g.render(os.path.join(self.directory, "simplified_tree"))

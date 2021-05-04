@@ -40,10 +40,10 @@ df.drop(df[df["id_paz"] == 2395494].index, inplace=True)
 ''' remove duplicated reports '''
 df.drop_duplicates(subset=["id_isto"], inplace=True, keep=False)
 
-''' remove rows with too many missing values '''
-labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 'stadio_N', 'grading', 'dimensioni', 'recettori_estrogeni', 'recettori_progestin', 'numero_sentinella_asportati', 'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67']
-patients_with_too_many_missing_labels = set(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) >= 14)].id_paz.unique())
-df.drop(df[df.id_paz.isin(patients_with_too_many_missing_labels)].index, inplace=True)
+# ''' remove rows with too many missing values '''
+# labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 'stadio_N', 'grading', 'dimensioni', 'recettori_estrogeni', 'recettori_progestin', 'numero_sentinella_asportati', 'numero_sentinella_positivi', 'mib1', 'cerb', 'ki67']
+# patients_with_too_many_missing_labels = set(df[(df.loc[:,labels_cols].isnull().values.sum(axis=1) >= 14)].id_paz.unique())
+# df.drop(df[df.id_paz.isin(patients_with_too_many_missing_labels)].index, inplace=True)
 
 ''' clean "sede_icdo3" column '''
 df["sede_icdo3"] = df["sede_icdo3"].apply(lambda s: s.upper())
@@ -85,6 +85,11 @@ df["stadio_N"] = df["stadio_N"].apply(lambda v: str(v).replace(" ", "").upper() 
 ''' convert "numero_sentinella_asportati" and "numero_sentinella_positivi" '''
 for column in ["numero_sentinella_asportati", "numero_sentinella_positivi"]:
     df[column] = df[column].astype("Int64")
+
+''' clean "numero_sentinella_asportati" and "numero_sentinella_positivi" '''
+df.loc[df[df.numero_sentinella_asportati == 0].index, "numero_sentinella_asportati"] = np.NaN
+df.loc[df[df.numero_sentinella_asportati > 6].index, "numero_sentinella_asportati"] = np.NaN
+df.loc[df[df.numero_sentinella_positivi > 3].index, "numero_sentinella_positivi"] = np.NaN
 
 mask_invalid_rows = df.index[(df["numero_sentinella_asportati"].notnull()) &
                              (df["numero_sentinella_positivi"].notnull()) &
@@ -156,7 +161,7 @@ dfTrain = df[df['id_paz'].isin(trainPatients)].copy()
 dfVal = df[df['id_paz'].isin(valPatients)].copy()
 dfTest = df[df['id_paz'].isin(testPatients)].copy()
 
-dfTrain.drop(dfTrain[dfTrain.anno_referto != dfTrain.anno_diagnosi].index, inplace=True)
+# dfTrain.drop(dfTrain[dfTrain.anno_referto != dfTrain.anno_diagnosi].index, inplace=True)
 
 # total:      25184 patients                                                                      115865 reports
 # train:      17565 patients (69.75%) without reports neither in 2014 nor in 2015                  77862 reports
@@ -168,10 +173,11 @@ p = Preprocessor.get_default()
 replace_nulls(dfTrain, {col: "" for col in input_cols})
 texts = p.preprocess_batch(merge_and_extract(dfTrain, input_cols))
 tknzrs = []
-for n in range(1,6):
-    print(f"creating tokenizer with {n}-gram codec")
-    t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=10).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
+for n in range(1,4):
+    print(f"creating tokenizer with {n}-grams codec")
+    t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=0.001).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
     tknzrs.append(t)
+    print(f"number of tokens using {n}-grams tokenizer: {t.num_tokens()}")
 
 print("removing rows with no tokens")
 replace_nulls(dfVal, {col: "" for col in input_cols})

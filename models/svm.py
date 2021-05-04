@@ -3,7 +3,7 @@ import os
 import sys
 
 import numpy as np
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
 
 from utils.convert import sparse_tensor_to_csr_matrix
 
@@ -15,7 +15,10 @@ class SVM:
         self.tokenizer = tokenizer
         self.labels_codec = labels_codec
         self.__name__ = "SVM"
-        self.model = SVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight"}})
+        if kwargs.get("linear", False):
+            self.model = LinearSVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"loss", "penalty", "dual", "max_iter"}})
+        else:
+            self.model = SVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight"}})
         self.cls_var = None
         self.directory = kwargs['directory']
 

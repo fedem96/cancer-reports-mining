@@ -18,7 +18,7 @@ parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each cl
 parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
 parser.add_argument("-cr", "--concatenate-reports", help="whether to concatenate reports of the same record before training", default=False, action='store_true')
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
-parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf"])
+parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "bag", "tfidf"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=50, type=int)
 parser.add_argument("-f", "--filter", help="report filtering strategy",

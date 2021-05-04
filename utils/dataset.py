@@ -147,14 +147,18 @@ class Dataset:
     def get_data(self, data_type="indices", column_name=None):
         if column_name is None:
             column_name = self.encoded_data_column
+        print(data_type)
         if data_type == "indices":
             return self.get_data_as_tokens_indices(column_name)
+        elif data_type == "bag":
+            data = self.get_data_as_tfidf_vectors(column_name)
+            return torch.sparse_coo_tensor(data.coalesce().indices(), data.coalesce().values() > 0, data.shape).int()
         elif data_type == "tfidf":
             return self.get_data_as_tfidf_vectors(column_name)
         return "unknown data type: '{}'".format(data_type)
 
     def get_data_as_tokens_indices(self, column_name):
-        def _get_data_as_tokens_indices(dataframe, col_name, self_max_record_size, function_name):  # function_name is required for caching
+        def _get_data_as_tokens_indices(dataframe, col_name, self_max_record_size, must_concatenate):  # must_concatenate is required for caching
             # the number of tokens is between 40000 and 50000: 16 bit for indices are enough
             if type(dataframe) == list:
                 records = [[report.astype(np.uint16) for report in record[col_name].values] for record in dataframe]
@@ -181,10 +185,10 @@ class Dataset:
             # without group by, each row is treated as a single-report record
             max_report_length = max([len(report) for report in dataframe[col_name].values])
             return np.expand_dims(np.stack([np.pad(report.astype(np.uint16), (0,max_report_length-len(report))) for report in self.dataframe[col_name].values]), 1)
-        return caching(_get_data_as_tokens_indices)(self.dataframe, column_name, self.max_record_size, "get_data_as_tokens_indices")
+        return caching(_get_data_as_tokens_indices)(self.dataframe, column_name, self.max_record_size, self.must_concatenate)
 
     def get_data_as_tfidf_vectors(self, column_name):
-        def _get_data_as_tfidf_vectors(dataframe, col_name, function_name): # dataframe and function_name are required for caching
+        def _get_data_as_tfidf_vectors(dataframe, col_name, must_concatenate): # dataframe and must_concatenate are required for caching
             indices_data = self.get_data_as_tokens_indices(col_name)
 
             records_indexes = []
@@ -204,7 +208,7 @@ class Dataset:
                             tokens_values.append(self.tokenizer.get_idf(token, encode=True))
             indexes = [records_indexes, reports_indexes, tokens_indexes]
             return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.tokenizer.num_tokens()+1))
-        return caching(_get_data_as_tfidf_vectors)(self.dataframe, column_name, "get_data_as_tfidf_vectors")
+        return caching(_get_data_as_tfidf_vectors)(self.dataframe, column_name, self.must_concatenate)
 
     def group_by(self, attributes):
 

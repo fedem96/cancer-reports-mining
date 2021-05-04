@@ -176,7 +176,7 @@ class ModularBase(nn.Module, ABC):
         self.losses = {}
         self.num_classes = {}
         for var in filter(lambda t: "classification" in self.training_tasks[t]["type"], self.training_tasks):
-            classes_occurrences = train_labels[var].value_counts().sort_index().values
+            classes_occurrences = train_labels[var].value_counts().sort_index().to_numpy().astype(int)
             self.num_classes[var] = len(classes_occurrences)
             assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
             classes_weights = 1 / classes_occurrences
