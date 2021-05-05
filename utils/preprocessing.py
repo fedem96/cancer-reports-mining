@@ -19,6 +19,8 @@ class Preprocessor:
         text = re.sub(r"\{\*?\\[^{}]+}|[{}]|\\\n?[A-Za-z]+\n?(?:-?\d+)?[ ]?", " ", text)
         # TODO: not all RTF-originated characters are removed
 
+        text = text.replace("<br />", " ")
+
         # remove all invalid characters: accented letters, strange characters originated by a bad encoding...
         text = re.sub(r"[^0-9a-z\s" + string.punctuation + "]", "", text)
 
@@ -32,8 +34,10 @@ class Preprocessor:
             s = re.search("\dx\d", text)
         text = new_text + text
 
-        for c in string.punctuation:  # spaces around punctuation
-            text = re.sub(re.escape(c), " " + c + " ", text)
+        for c in string.punctuation:  # for each punctuation character
+            if c != "*" and c != "\\":
+                text = re.sub(re.escape(c) + "{2,}", c, text)     # remove sequences of the same character
+            text = re.sub(re.escape(c), " " + c + " ", text)  # spaces around character
 
         text = re.sub("\s{2,}", " ", text)  # remove double whitespaces
 
@@ -56,7 +60,7 @@ class Preprocessor:
         # text = text.replace("yp", " yp ") # with this replace is worse # TODO: investigate
 
         # cerb: make the same token
-        text = re.sub("c?\s?-?\s?erb\s?-?\s?b?\s?-?\s?2?", " cerb ", text)
+        text = re.sub("\sc?\s?-?\s?erb\s?-?\s?b?\s?-?\s?2?", " cerb ", text)
         text = re.sub("\sher\s?-?\s?2?", " cerb ", text)
 
         # ki67: make the same token

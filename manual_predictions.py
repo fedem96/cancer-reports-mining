@@ -46,76 +46,95 @@ def num_substr(substrs, txts):
     return s, s/len(txts)
 
 
-def search_context(expr, txt, context=5):
+def search_context(expr, txt, context=10):
     if tuple != type(context) != list:
         context = (context, context)
     return list(map(lambda m: txt[max(0, m.span()[0] - context[0]): m.span()[1] + context[1]], re.finditer(expr, txt)))
 
 
+def search_after(expr, txt, context=10):
+    assert type(context) == int
+    return list(map(lambda m: txt[m.span()[1]: m.span()[1] + context], re.finditer(expr, txt)))
+
+
 def evaluate(txts, labels, var, predictor):
+    labels = labels.reset_index()
     num_correct = sum([predictor(txts[i]) == labels[var].values[i] for i in labels[labels[var].notna()].index])
     tot_predicted = sum([predictor(txts[i]) is not None for i in labels[labels[var].notna()].index])
     tot_notna = labels[var].notna().sum()
     return num_correct/tot_notna, num_correct/tot_predicted, tot_predicted/tot_notna, tot_predicted, tot_notna
 
 
+def extract_value(r, value_regex, stop_regex):
+    end = len(r) if not re.search(stop_regex, r) else re.search(stop_regex, r).span()[0]
+    result = re.search(value_regex, r[:end])
+    if result is None:
+        return None
+    return int(result.group(1))
+
+
+def predict(markers, s, value_regex, stop_regex, context):
+    for marker in markers:
+        results = search_after(marker, s, context)
+        values = list(
+            filter(
+                lambda v: v is not None,
+                map(
+                    lambda r: extract_value(r, value_regex, stop_regex),
+                    filter(lambda r: re.search(value_regex, r), results)
+                )
+            )
+        )
+        if len(values) > 0:
+            return max([0, *values])
+    return None
+
+
 def predict_er(s):
     s = s.replace("negativo", "0 %").replace("-", "0 %")
-    results = search_context("\se\s?\.?\s?r\s", s, (0,50))
-    stop_regex = "p\s?\.?\s?g\s?\.?\s?r|progest"
-    # values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r[:len(r) if re.search(stop_regex, s) is None else re.search(stop_regex, s).span()[0]]).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    if len(values) == 0:
-        results = search_context("estrog", s, (0,50))
-        # values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r[:len(r) if re.search(stop_regex, s) is None else re.search(stop_regex, s).span()[0]]).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-        values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-        if len(values) == 0:
-            return None
-    return max([0, *values])
+    markers = [r" er\s?:", r" er\s.{,10}:", " er ", "estrogen[i|o].{,10}:", "estrogen[i|o]"]
+    value_regex = "(\d?\d?\d) %"
+    stop_regex = "ki67|mib1|cerb|pgr|progest|;"
+    return predict(markers, s, value_regex, stop_regex, 60)
 
 
 def predict_pgr(s):
-    # k =  re.search("ki67", s)
-    # if k is not None:
-    #     s = s[:k.span()[0]]
     s = s.replace("negativo", "0 %").replace("-", "0 %")
-    results = search_context("p\s?\.?\s?g\s?\.?\s?r", s, (0,50))
-    values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r[:len(r) if "ki67" not in r else re.search("ki67", s).span()[0]]).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    if len(values) == 0:
-        results = search_context("progest", s, (0,50))
-        values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r[:len(r) if "ki67" not in r else re.search("ki67", s).span()[0]]).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-        if len(values) == 0:
-            return None
-    return max([0, *values])
+    markers = ["pgr?.{,10}:", "pgr?", "progest[in|erone].{,10}:", "progest[in|erone]"]
+    value_regex = "(\d?\d?\d) %"
+    stop_regex = r"ki67|mib1|cerb|estrogen|\ser\s;"
+    return predict(markers, s, value_regex, stop_regex, 60)
 
 
 def predict_ki67(s):
     s = s.replace("negativo", "0 %").replace("-", "0 %")
-    results = search_context("ki67", s, (0,50))
-    values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    if len(values) == 0:
-        return None
-    return max([0, *values])
+    markers = [r"ki67\s?.{,10}:", r"mib1\s?.{,10}:", "ki67", "mib1"]
+    value_regex = "(\d?\d?\d) %"
+    stop_regex = r"cerb|pgr|\ser\s|progest|estrog"
+    return predict(markers, s, value_regex, stop_regex, 60)
 
 
 def predict_cerb(s):
     s = s.replace("negativo", "0 %").replace("-", "0 %")
-    results = search_context("cerb", s, (0,50))
-    values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    if len(values) == 0:
-        return None
-    return max([0, *values])
+    markers = ["cerb.*score", r"cerb\s?.{,10}:", r"cerb\s?.{,20}:", r"cerb\s?.{,30}:"]
+    value_regex = "(\d?\d?\d)"
+    stop_regex = r"pgr|\ser\s|progest|estrog|ki67|mib1|;|\."
+    result = predict(markers, s, value_regex, stop_regex,60)
+    if result is not None:
+        return result
+    return None
+    # return 0   # with 0 as default value, the overall accuracy increases, while the accuracy on predicted only slightly decreases
 
 
 def predict_mib1(s):
     s = s.replace("negativo", "0 %").replace("-", "0 %")
-    results = search_context("mib1", s, (0,50))
-    values = list(filter(lambda v: v is not None, map(lambda r: int(re.search("(\d?\d?\d) %", r).group(1)) if re.search("(\d?\d?\d) %",r) is not None else None,results)))
-    if len(values) == 0:
-        return None
-    return max([0, *values])
+    markers = [r"mib1\s?.{,10}:", r"mib1\s?.{,20}:", "mib1"]
+    value_regex = "(\d?\d?\d) %"
+    stop_regex = r"cerb|pgr|\ser\s|progest|estrog|ki67"
+    return predict(markers, s, value_regex, stop_regex,60)
 
 
+# TODO: find good default values for predictors by examining distribution when they do not find any marker
 predictors = {
     "recettori_estrogeni": predict_er,
     "recettori_progestin": predict_pgr,
@@ -134,7 +153,7 @@ for var in ["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1"
 
 if args.print_samples:
     samples_to_print = 20
-    for var, expr in zip(["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1"], ["\se\s?\.?\s?r|estrog", "(p\s?\.?\s?g\s?\.?\s?r|progest)", "ki67", "cerb", "mib1"]):
+    for var, expr in zip(["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1"], ["\se\s?\.?\s?r|estrog", "(pgr?|progest)", "ki67", "cerb", "mib1"]):
         if var != "cerb":
             continue
         print(var.upper())
