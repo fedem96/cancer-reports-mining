@@ -61,7 +61,7 @@ print("generating tokenizers")
 p = Preprocessor.get_default()
 texts = p.preprocess_batch(merge_and_extract(dfTrain, input_cols))
 tknzrs = []
-for n in range(1,4):
+for n in range(1,5):
     print(f"creating tokenizer with {n}-gram codec")
     t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=10).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
     tknzrs.append(t)

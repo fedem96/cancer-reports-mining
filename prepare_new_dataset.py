@@ -173,7 +173,7 @@ p = Preprocessor.get_default()
 replace_nulls(dfTrain, {col: "" for col in input_cols})
 texts = p.preprocess_batch(merge_and_extract(dfTrain, input_cols))
 tknzrs = []
-for n in range(1,4):
+for n in range(1,5):
     print(f"creating tokenizer with {n}-grams codec")
     t = Tokenizer(n_grams=n).create_codec(texts, min_occurrences=0.001).save(os.path.join(args.dataset_dir, f"tokenizer-{n}gram.json"))
     tknzrs.append(t)
@@ -197,8 +197,8 @@ dfTest.to_csv(os.path.join(args.dataset_dir, TEST_SET), index=False)
 
 print("calculating statistics")
 stats_dir = os.path.join(args.dataset_dir, args.stats)
-bar_columns = ["anno_diagnosi", "sede_icdo3", "morfologia_icdo3", "tipo_T", "metastasi", "modalita_T", "modalita_N", "stadio_T", "stadio_N", "grading", "anno_referto"]
-hist_columns = ["dimensioni", "recettori_estrogeni", "recettori_progestin", "numero_sentinella_asportati", "numero_sentinella_positivi", "mib1", "cerb", "ki67"]
+bar_columns = ["anno_diagnosi", "sede_icdo3", "morfologia_icdo3", "tipo_T", "metastasi", "modalita_T", "modalita_N", "stadio_T", "stadio_N", "grading", "anno_referto", "numero_sentinella_asportati", "numero_sentinella_positivi"]
+hist_columns = ["dimensioni", "recettori_estrogeni", "recettori_progestin", "mib1", "cerb", "ki67"]
 years = range(2003, 2016)
 dataframes = [df] + [df[df["anno_diagnosi"] == year] for year in years] + [dfTrain, dfVal, dfTest]
 images_dirs = [stats_dir] + [os.path.join(stats_dir, str(year)) for year in years] + [os.path.join(stats_dir, "train"), os.path.join(stats_dir, "val"), os.path.join(stats_dir, "test")]

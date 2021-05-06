@@ -34,7 +34,7 @@ parser.add_argument("-lrsa", "--learning-rate-scheduler-args", help="args for le
 parser.add_argument("-lp", "--labels-preprocessing", help="how to preprocess the labels", default={}, type=json.loads)
 parser.add_argument("-m", "--model", help="model to train", default=None, type=str, required=True)
 parser.add_argument("-ma", "--model-args", help="model to train", default=None, type=json.loads)
-parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,6))
+parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,5))
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)

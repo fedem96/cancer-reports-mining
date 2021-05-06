@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import traceback
 
 import numpy as np
 from sklearn import tree
@@ -75,7 +76,12 @@ class DecisionTree:
         self.model.fit(train_data, train_labels)
 
         if importlib.util.find_spec('graphviz'):
-            self.save_pdf()
+            from graphviz.backend import CalledProcessError
+            try:
+                self.save_pdf()
+            except CalledProcessError:
+                traceback.print_stack()
+                print("pdf of the tree not saved", file=sys.stderr)
 
         print("evaluating train")
         train_metrics = self.evaluate(train_data, train_labels)
