@@ -180,8 +180,6 @@ class ModularBase(nn.Module, ABC):
             self.num_classes[var] = len(classes_occurrences)
             assert self.num_classes[var] == max(train_labels[var].dropna().unique()) + 1
             classes_weights = 1 / classes_occurrences
-            if var == "modalita_T":
-                classes_weights *= classes_weights
             classes_weights = torch.from_numpy(classes_weights).float().to(self.current_device())
             self.losses[var] = nn.CrossEntropyLoss(classes_weights)
             self.training_tasks[var]["highest_frequency"] = max(classes_occurrences) / sum(classes_occurrences)
@@ -302,6 +300,10 @@ class ModularBase(nn.Module, ABC):
             if mask.sum() == 0:
                 continue
             preds = forwarded[var][mask].squeeze()
+            if preds.ndim == 0:
+                preds = preds.unsqueeze(0).unsqueeze(0)
+            elif preds.ndim == 1:
+                preds = preds.unsqueeze(0)
             grth = torch.tensor(labels[var][mask].to_list(), device=device, requires_grad=False)
             if "classification" in self.training_tasks[var]["type"]:
                 grth = grth.long()

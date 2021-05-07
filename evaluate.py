@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from metrics.accumulate_predictions import PredictionsAccumulator
 from metrics.accuracy import Accuracy
 from metrics.average import Average
 from metrics.cks import CohenKappaScore
@@ -23,6 +24,7 @@ from utils.serialization import load
 from utils.utilities import merge_and_extract, to_gpu_if_available, show_confusion_matrix, show_regression_2Dkde
 
 parser = argparse.ArgumentParser(description='Evaluate a model')
+parser.add_argument("-b", "--batch-size", help="batch size to use when evaluate", default=128, type=int)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
 parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
@@ -60,7 +62,8 @@ print("model device:", device)
 torch.set_grad_enabled(False)
 classifications, regressions = model.get_validation_classifications(), model.get_validation_regressions()
 
-dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols, max_report_length=args.max_length)
+tokenizer_file_name = "tokenizer-1gram.json"
+dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols, tokenizer_file_name, max_report_length=args.max_length)
 dataset.add_encoded_column(model.encode_report, dataset.encoded_data_column, dataset.max_report_length)
 dataset.set_classifications(classifications)
 dataset.set_regressions(regressions)
@@ -83,7 +86,7 @@ dumb_baseline_accuracy = {}
 num_classes = {}
 stds = {}
 for var in classifications:
-    classes_occurrences = labels[var].value_counts().sort_index().values
+    classes_occurrences = labels[var].value_counts().sort_index().to_numpy().astype(int)
     num_classes[var] = len(classes_occurrences)
     classes_weights = 1 / classes_occurrences # TODO: cambiare pesi
     classes_weights = torch.from_numpy(classes_weights).float().to(model.current_device())
@@ -114,15 +117,20 @@ def create_regression_metrics(regressions):
         "NMAE": {var: NormalizedMeanAbsoluteError(stds[var]) for var in regressions}
     }
 
+def create_predictions_accumulator(classifications, regressions):
+    return {
+        "Predictions": {var: PredictionsAccumulator() for var in list(classifications) + list(regressions)}
+    }
+
 
 classification_metrics = create_classification_metrics(classifications)
 regression_metrics = create_regression_metrics(regressions)
 
 metrics = Metrics({**create_losses(classifications, regressions), **classification_metrics,
-                   **regression_metrics})
+                   **regression_metrics, **create_predictions_accumulator(classifications, regressions)})
 
 data = torch.tensor(data.astype(np.int16), device=device)
-batch_size = 64
+batch_size = args.batch_size
 num_batches = len(data) // batch_size
 metrics.reset()
 y_preds = defaultdict(lambda: [])
@@ -130,36 +138,7 @@ with Chronometer("calculating metrics"):
     for b in range(num_batches):
         batch = data[b * batch_size: (b + 1) * batch_size]
         batch_labels = labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
-        forwarded = model(batch)
-        for var in classifications:
-            mask = ~batch_labels[var].isnull()
-            if mask.sum() == 0:
-                continue
-            preds = forwarded[var][mask].squeeze(2).squeeze(1)
-            grth = torch.tensor(batch_labels[var][mask].to_list(), dtype=torch.long, device=device, requires_grad=False).cpu().numpy()
-            loss = metrics.metrics["Loss"][var](preds, grth) / len(grth)
-            preds_classes = torch.argmax(preds.detach(), dim=1).cpu().numpy()
-            y_preds[var].append(preds_classes)
-
-            metrics.metrics["Loss"][var].update(loss, num_batches)
-            for metric_name in classification_metrics:
-                if var in metrics.metrics[metric_name]:
-                    metrics.metrics[metric_name][var].update(preds_classes, grth)
-                else:
-                    for cls in range(dataset.nunique(var)):
-                        metrics.metrics[metric_name][var + "_" + str(cls)].update(preds_classes, grth)
-
-        for var in regressions:
-            mask = ~batch_labels[var].isnull()
-            if mask.sum() == 0:
-                continue
-            preds = forwarded[var][mask].squeeze(3).squeeze(2).squeeze(1).cpu()
-            grth = torch.tensor(batch_labels[var][mask].to_list(), requires_grad=False)
-            loss = losses[var](preds, grth) / len(grth)
-            y_preds[var].append(preds)
-            metrics.metrics["Loss"][var].update(loss.item(), num_batches)
-            for metric_name in regression_metrics:
-                metrics.metrics[metric_name][var].update(preds, grth)
+        model.step(batch, batch_labels, num_batches, metrics.metrics, False)
 
 pprint(metrics)
 
@@ -174,7 +153,7 @@ for var in classifications:
     directory = os.path.join(evaluate_dir, var)
     if not os.path.exists(directory):
         os.makedirs(directory)
-    y_pred = np.concatenate(y_preds[var])
+    y_pred = metrics.metrics["Predictions"][var]()
     y_true = labels[var].dropna().to_numpy().astype(int)[:len(y_pred)]
     with open(os.path.join(directory, "errors.json"), 'w') as errors_file:
         errors = [dataset.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred != y_true)[0].tolist()]
