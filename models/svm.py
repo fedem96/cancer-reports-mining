@@ -16,7 +16,7 @@ class SVM:
         self.labels_codec = labels_codec
         self.__name__ = "SVM"
         if kwargs.get("linear", False):
-            self.model = LinearSVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"loss", "penalty", "dual", "max_iter"}})
+            self.model = LinearSVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight", "loss", "penalty", "dual", "max_iter"}})
         else:
             self.model = SVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight"}})
         self.cls_var = None
