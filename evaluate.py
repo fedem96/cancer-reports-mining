@@ -42,6 +42,7 @@ parser.add_argument("-gb", "--group-by",
 parser.add_argument("-m", "--model", help="model to use", default=None, type=str, required=True)
 # parser.add_argument("-ma", "--model-args", help="saved model to train", default=None, type=json.loads)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
+parser.add_argument("-ms", "--max-size", help="maximum size of the records (i.e. maximum reports per record)", default=None, type=int)
 # parser.add_argument("-rm", "--reduce-mode", help="how to reduce", default=None, type=str)
 # parser.add_argument("-rt", "--reduce-type", help="what to reduce", default=None, type=str,
 #                     choices=["data", "features", "logits", "eval"])
@@ -63,7 +64,7 @@ torch.set_grad_enabled(False)
 classifications, regressions = model.get_validation_classifications(), model.get_validation_regressions()
 
 tokenizer_file_name = "tokenizer-1gram.json"
-dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols, tokenizer_file_name, max_report_length=args.max_length)
+dataset = Dataset(args.dataset_dir, args.set + "_set.csv", input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size)
 dataset.add_encoded_column(model.encode_report, dataset.encoded_data_column, dataset.max_report_length)
 dataset.set_classifications(classifications)
 dataset.set_regressions(regressions)
