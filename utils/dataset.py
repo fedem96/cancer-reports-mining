@@ -152,7 +152,7 @@ class Dataset:
             return self.get_data_as_tokens_indices(column_name)
         elif data_type == "bag":
             data = self.get_data_as_tfidf_vectors(column_name)
-            return torch.sparse_coo_tensor(data.coalesce().indices(), data.coalesce().values() > 0, data.shape).int()
+            return torch.sparse_coo_tensor(data.indices(), data.values() > 0, data.shape).int()
         elif data_type == "tfidf":
             return self.get_data_as_tfidf_vectors(column_name)
         return "unknown data type: '{}'".format(data_type)
@@ -207,7 +207,7 @@ class Dataset:
                             tokens_indexes.append(self.tokenizer.encode_token(token))
                             tokens_values.append(self.tokenizer.get_idf(token, encode=True))
             indexes = [records_indexes, reports_indexes, tokens_indexes]
-            return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.tokenizer.num_tokens()+1))
+            return torch.sparse_coo_tensor(indexes, tokens_values, (*indices_data.shape[:2], self.tokenizer.num_tokens()+1)).coalesce()
         return caching(_get_data_as_tfidf_vectors)(self.dataframe, column_name, self.must_concatenate)
 
     def group_by(self, attributes):

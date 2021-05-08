@@ -240,7 +240,8 @@ class ModularBase(nn.Module, ABC):
                     if train_data.is_sparse:  # sparse tensor does not support array indexing
                         mask = (train_data._indices()[0].view(-1, 1) == torch.tensor(batch_perm).to(self.current_device()).view(1, -1)).sum(axis=1).bool()
                         indices = train_data._indices()[:,mask]
-                        indices[0] = torch.tensor([np.where(batch_perm == i.item())[0].item() for i in indices[0]], device=self.current_device())
+                        index_to_batchindex = {n: i for i, n in enumerate(batch_perm)}
+                        indices[0] = torch.tensor([index_to_batchindex[i.item()] for i in indices[0]], device=self.current_device())
                         batch = torch.sparse_coo_tensor(indices, train_data._values()[mask], (batch_size, *train_data.shape[1:])).to_dense()
                     else:
                         batch = train_data[batch_perm]

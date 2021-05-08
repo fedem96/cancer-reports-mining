@@ -207,8 +207,11 @@ callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=mo
              #EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)
             ]
 
+with Chronostep("getting training and validation data"):
+    training_data = training.get_data(args.data_format)
+    validation_data = validation.get_data(args.data_format)
 with Chronostep("training model '{}'".format(model_name)):
-    model.fit(training.get_data(args.data_format), training_labels, validation.get_data(args.data_format), validation_labels, info, callbacks, **hyperparameters)
+    model.fit(training_data, training_labels, validation_data, validation_labels, info, callbacks, **hyperparameters)
 
 # TODO: clean code and apis
 # TODO: speedup script
