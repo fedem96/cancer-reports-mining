@@ -326,8 +326,13 @@ class ModularBase(nn.Module, ABC):
 
             metrics["Loss"][var].update(losses[var], num_batches)
             for metric_name, metric in metrics.items():
-                if metric_name not in {"Loss", "GradNorm"} and var in metric:
-                    metric[var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
+                if metric_name not in {"Loss", "GradNorm"}:
+                    if var in metric:
+                        metric[var].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
+                    else:
+                        for cls in range(self.num_classes[var]):
+                            if var + "_" + str(cls) in metric:
+                                metric[var + "_" + str(cls)].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
         if self.activation_penalty != 0:
             regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()

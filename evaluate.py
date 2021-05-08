@@ -12,11 +12,15 @@ from metrics.accuracy import Accuracy
 from metrics.average import Average
 from metrics.cks import CohenKappaScore
 from metrics.dbcs import DumbBaselineComparisonScore
+from metrics.f1 import F1Score
+from metrics.m_precision import MacroPrecision
+from metrics.m_recall import MacroRecall
 from metrics.mae import MeanAbsoluteError
 from metrics.metrics import Metrics
 from metrics.m_f1 import MacroF1Score
 from metrics.nmae import NormalizedMeanAbsoluteError
 from metrics.precision import Precision
+from metrics.recall import Recall
 from utils.chrono import Chronometer
 from utils.constants import *
 from utils.dataset import Dataset
@@ -105,10 +109,14 @@ def create_losses(classifications, regressions):
 def create_classification_metrics(classifications):
     return {
         "Accuracy": {var: Accuracy() for var in classifications},
+        "M-Precision": {var: MacroPrecision() for var in classifications},
+        "M-Recall": {var: MacroRecall() for var in classifications},
         "M-F1": {var: MacroF1Score() for var in classifications},
         "CKS": {var: CohenKappaScore() for var in classifications},
         "DBCS": {var: DumbBaselineComparisonScore(dumb_baseline_accuracy[var]) for var in classifications},
-        "M-Precision": {var + "_" + str(cls): Precision(cls) for var in classifications for cls in range(dataset.nunique(var))}
+        "Precisions": {var + "_" + str(cls): Precision(cls) for var in classifications for cls in range(dataset.nunique(var))},
+        "Recalls": {var + "_" + str(cls): Recall(cls) for var in classifications for cls in range(dataset.nunique(var))},
+        "F1s": {var + "_" + str(cls): F1Score(cls) for var in classifications for cls in range(dataset.nunique(var))}
     }
 
 
