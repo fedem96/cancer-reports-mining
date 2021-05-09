@@ -66,7 +66,7 @@ class ModelCheckpoint(Callback):
             if self.verbose:
                 print("epoch {}: saving last model".format(epoch))
             self.best = metric_val
-            self._save_model(model, "model_last")
+            self._save_model(model, "model_last.pth")
         if self.save_best and metric_val < self.best:
             if self.verbose:
                 print("epoch {}: saving new best model".format(epoch))

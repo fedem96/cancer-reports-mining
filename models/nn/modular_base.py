@@ -11,6 +11,7 @@ from torch.optim.lr_scheduler import StepLR
 
 from callbacks.base_callback import Callback
 from layers.gradient_reversal import GradientReversal
+from metrics.accumulate_predictions import PredictionsAccumulator
 from metrics.accuracy import Accuracy
 from metrics.average import Average
 from metrics.cks import CohenKappaScore
@@ -208,19 +209,12 @@ class ModularBase(nn.Module, ABC):
             self.classifiers_l2_penalty = hyperparams["classifiers_l2_penalty"]
             self.regressors_l2_penalty = hyperparams["regressors_l2_penalty"]
 
-            if not torch.is_tensor(train_data):
-                train_data = torch.tensor(train_data.astype(np.int16), device=self.current_device())
-                # torch does not have uint16 dtype: be aware that indices in range [32768,65535] will be stored as negative numbers
-            else:
-                train_data = train_data.to(self.current_device())
-            if not torch.is_tensor(val_data):
-                val_data = torch.tensor(val_data.astype(np.int16), device=self.current_device())
-            else:
-                val_data = val_data.to(self.current_device())
+            train_data = self.tensorize(train_data)
+            val_data = self.tensorize(val_data)
 
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
-            num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
+            num_batches, num_val_batches = (len(train_data) + batch_size - 1) // batch_size, (len(val_data) + batch_size - 1) // batch_size
             train_metrics = Metrics({**self.create_losses_metrics(self.training_tasks), **self.create_metrics(self.training_tasks), **self.create_grad_norm_metrics()})
             val_metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_metrics(self.validation_tasks)})
 
@@ -231,22 +225,14 @@ class ModularBase(nn.Module, ABC):
 
                 # shuffle dataset
                 train_perm = np.random.permutation(len(train_data))
-                val_perm = np.random.permutation(len(val_data))         # even if shuffling the validation is not required, having a permutation is useful when using sparse data
+                # val_perm = np.random.permutation(len(val_data))         # even if shuffling the validation is not required, having a permutation is useful when using sparse data
+                val_perm = np.arange(len(val_data))         # even if shuffling the validation is not required, having a permutation is useful when using sparse data
 
                 # train epoch
                 [c.on_train_epoch_start(self, epoch) for c in callbacks]
                 for b in range(num_batches):
                     [c.on_train_batch_start(self) for c in callbacks]
-                    batch_perm = train_perm[b * batch_size: (b + 1) * batch_size]
-                    if train_data.is_sparse:  # sparse tensor does not support array indexing
-                        mask = (train_data._indices()[0].view(-1, 1) == torch.tensor(batch_perm).to(self.current_device()).view(1, -1)).sum(axis=1).bool()
-                        indices = train_data._indices()[:,mask]
-                        index_to_batchindex = {n: i for i, n in enumerate(batch_perm)}
-                        indices[0] = torch.tensor([index_to_batchindex[i.item()] for i in indices[0]], device=self.current_device())
-                        batch = torch.sparse_coo_tensor(indices, train_data._values()[mask], (batch_size, *train_data.shape[1:])).to_dense()
-                    else:
-                        batch = train_data[batch_perm]
-                    batch_labels = train_labels.iloc[batch_perm].reset_index()
+                    batch, batch_labels = self.get_batch(train_data, train_labels, train_perm[b * batch_size: (b + 1) * batch_size])
                     self.train_step(batch, batch_labels, num_batches, metrics=train_metrics.metrics)
                     [c.on_train_batch_end(self, train_metrics.metrics) for c in callbacks]
                 [c.on_train_epoch_end(self, epoch, train_metrics.metrics) for c in callbacks]
@@ -256,15 +242,7 @@ class ModularBase(nn.Module, ABC):
                     [c.on_validation_epoch_start(self, epoch) for c in callbacks]
                     for b in range(num_val_batches):
                         [c.on_validation_batch_start(self) for c in callbacks]
-                        batch_perm = val_perm[b * batch_size: (b + 1) * batch_size]
-                        if val_data.is_sparse:  # sparse tensor does not support array indexing
-                            mask = (val_data._indices()[0].view(-1, 1) == torch.tensor(batch_perm).to(self.current_device()).view(1, -1)).sum(axis=1).bool()
-                            indices = val_data._indices()[:,mask]
-                            indices[0] = torch.tensor([np.where(batch_perm == i.item())[0].item() for i in indices[0]], device=self.current_device())
-                            batch = torch.sparse_coo_tensor(indices, val_data._values()[mask], (batch_size, *val_data.shape[1:])).to_dense()
-                        else:
-                            batch = val_data[batch_perm]
-                        batch_labels = val_labels.iloc[batch_perm].reset_index()
+                        batch, batch_labels = self.get_batch(val_data, val_labels, val_perm[b * batch_size: (b + 1) * batch_size])
                         self.validation_step(batch, batch_labels, num_val_batches, metrics=val_metrics.metrics)
                         [c.on_validation_batch_end(self, val_metrics.metrics) for c in callbacks]
                     [c.on_validation_epoch_end(self, epoch, val_metrics.metrics) for c in callbacks]
@@ -406,13 +384,29 @@ class ModularBase(nn.Module, ABC):
         return str(str_dict)
 
     def create_metrics(self, tasks):
-        return {**self.create_classifications_metrics([t for t in tasks.values() if "classification" in t["type"]]),
+        metrics_dict = {**self.create_classifications_metrics([t for t in tasks.values() if "classification" in t["type"]]),
             **self.create_regressions_metrics([t for t in tasks.values() if "regression" in t["type"]])}
+        metrics_names = list(metrics_dict.keys())
+        for m_name in metrics_names:
+            if len(metrics_dict[m_name]) == 0:
+                del metrics_dict[m_name]
+        return metrics_dict
 
     def create_losses_metrics(self, tasks):
         return {
             "Loss": {var: Average(min) for var in tasks.keys()}
         }
+
+
+    def create_detailed_metrics(self, tasks):
+        metrics_dict = {**self.create_classifications_metrics([t for t in tasks.values() if "classification" in t["type"]]),
+                **self.create_classifications_detailed_metrics([t for t in tasks.values() if "classification" in t["type"]]),
+                **self.create_regressions_metrics([t for t in tasks.values() if "regression" in t["type"]])}
+        metrics_names = list(metrics_dict.keys())
+        for m_name in metrics_names:
+            if len(metrics_dict[m_name]) == 0:
+                del metrics_dict[m_name]
+        return metrics_dict
 
     def create_classifications_metrics(self, tasks):
         return {
@@ -425,6 +419,13 @@ class ModularBase(nn.Module, ABC):
             "DBCS": {t['name']: DumbBaselineComparisonScore(t['highest_frequency']) for t in tasks}
         }
 
+    def create_classifications_detailed_metrics(self, tasks):
+        return  {
+            "Precisions": {t['name'] + "_" + str(cls): Precision(cls) for t in tasks for cls in range(t['num_classes'])},
+            "Recalls": {t['name'] + "_" + str(cls): Recall(cls) for t in tasks for cls in range(t['num_classes'])},
+            "F1s": {t['name'] + "_" + str(cls): F1Score(cls) for t in tasks for cls in range(t['num_classes'])}
+        }
+
     def create_regressions_metrics(self, tasks):
         return {
             "MAE": {t['name']: MeanAbsoluteError() for t in tasks},
@@ -434,6 +435,11 @@ class ModularBase(nn.Module, ABC):
     def create_grad_norm_metrics(self):
         return {
             "GradNorm": {var: Average(max) for var in list(self.predictors.keys()) + ["features_l1", "weights_l2"]}
+        }
+
+    def create_predictions_accumulator(self):
+        return {
+            "Predictions": {var: PredictionsAccumulator() for var in self.predictors.keys()}
         }
 
     def grad_vector(self):
@@ -451,3 +457,30 @@ class ModularBase(nn.Module, ABC):
 
     def get_validation_regressions(self):
         return [task["name"] for task in self.validation_tasks.values() if "regression" in task["type"]]
+
+    def tensorize(self, data):
+        if not torch.is_tensor(data):
+            return torch.tensor(data.astype(np.int16), device=self.current_device())
+            # torch does not have uint16 dtype: be aware that indices in range [32768,65535] will be stored as negative numbers
+        return data.to(self.current_device())
+
+    def get_batch(self, data, labels, batch_indexes):
+        if data.is_sparse:  # sparse tensor does not support array indexing
+            mask = (data._indices()[0].view(-1, 1) == torch.tensor(batch_indexes).to(self.current_device()).view(1,-1)).sum(axis=1).bool()
+            indices = data._indices()[:, mask]
+            index_to_batchindex = {n: i for i, n in enumerate(batch_indexes)}
+            indices[0] = torch.tensor([index_to_batchindex[i.item()] for i in indices[0]], device=self.current_device())
+            batch = torch.sparse_coo_tensor(indices, data._values()[mask], (len(batch_indexes), *data.shape[1:])).to_dense()
+        else:
+            batch = data[batch_indexes]
+        batch_labels = labels.iloc[batch_indexes].reset_index()
+        return batch, batch_labels
+
+    def evaluate(self, data, labels, batch_size):
+        data = self.tensorize(data)
+        metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_detailed_metrics(self.validation_tasks)})
+        num_batches = (len(data) + batch_size - 1) // batch_size
+        for b in range(num_batches):
+            batch, batch_labels = self.get_batch(data, labels, range(b * batch_size, min(len(data), (b + 1) * batch_size)))
+            self.validation_step(batch, batch_labels, num_batches, metrics.metrics)
+        return metrics.metrics

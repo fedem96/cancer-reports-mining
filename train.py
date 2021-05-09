@@ -1,6 +1,7 @@
 import argparse
 import json
 from importlib import import_module
+from pprint import pprint
 
 from callbacks.early_stopping import EarlyStoppingSW
 from callbacks.logger import MetricsLogger
@@ -53,6 +54,7 @@ parser.add_argument("-rta", "--reports-transformation-args", help="args for repo
 parser.add_argument("-tac", "--train-anti-classifications", help="list of classifications preceded by a Gradient Reversal Layer", default=[], nargs="+", type=str)
 parser.add_argument("-tar", "--train-anti-regressions", help="list of regressions preceded by a Gradient Reversal Layer", default=[], nargs="+", type=str)
 parser.add_argument("-tc", "--train-classifications", help="list of classifications", default=[], nargs="+", type=str)
+parser.add_argument("-te", "--test", help="whether to evaluate the metrics on the test set", default=False, action='store_true')
 parser.add_argument("-to", "--training-set-only", help="list of variables to predict only on the training set", default=[], nargs="+", type=str)
 parser.add_argument("-tr", "--train-regressions", help="list of regressions", default=[], nargs="+", type=str)
 args = parser.parse_args()
@@ -70,11 +72,14 @@ with Chronostep("encoding reports"):
     tokenizer_file_name = f"tokenizer-{args.n_grams}gram.json"
     sets = {
         "train": Dataset(args.dataset_dir, TRAINING_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size),
-        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size)
+        "val": Dataset(args.dataset_dir, VALIDATION_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size),
+        "test": Dataset(args.dataset_dir, TEST_SET, args.input_cols, tokenizer_file_name, max_report_length=args.max_length, max_record_size=args.max_size)
     }
-    training, validation = sets["train"], sets["val"]
+    training, validation, test = sets["train"], sets["val"], sets["test"]
 
-    for set_name in ["train", "val"]:
+    for set_name in ["train", "val", "test"]:
+        if set_name == "test" and not args.test:
+            continue
         dataset = sets[set_name]
 
         t = dataset.tokenizer
@@ -107,15 +112,14 @@ with Chronostep("encoding reports"):
 
             dataset.compute_lazy()
 
-    if args.group_by is not None:
-        training.assert_disjuncted(validation)
-
-    # training.limit(16840)
-    # validation.limit(2048)
+    training.limit(1024)
+    validation.limit(1024)
 print(f"number of tokens: {training.tokenizer.num_tokens()}")
 with Chronostep("getting labels"):
     training_labels = training.get_labels()
     validation_labels = validation.get_labels()
+    if args.test:
+        test_labels = test.get_labels()
 with Chronostep("calculating labels distributions"):
     for column in training.classifications:
         print("training")
@@ -124,6 +128,10 @@ with Chronostep("calculating labels distributions"):
             print("validation")
             print(validation_labels[column].value_counts())
             print()
+            if args.test:
+                print("test")
+                print(test_labels[column].value_counts())
+                print()
     for column in training.regressions:
         print(column)
         print("training")
@@ -138,6 +146,13 @@ with Chronostep("calculating labels distributions"):
             print("mean:", validation_labels[column].mean())
             print("std:", validation_labels[column].std())
             print()
+            if args.test:
+                print("test")
+                print("min:", validation_labels[column].min())
+                print("max:", validation_labels[column].max())
+                print("mean:", validation_labels[column].mean())
+                print("std:", validation_labels[column].std())
+                print()
 
 with Chronostep("creating model"):
     model_name = args.name or random_name(str(args.model).split(".")[-1])
@@ -204,9 +219,15 @@ if args.data_seed is not None:
 # hist([len(ex) for ex in training.get_data(DATA_COL)])
 
 tb_dir = os.path.join(model_dir, "logs")
+if len(regressions) == 0:  # only classifications
+    monitor_metric = 'Accuracy'
+    baseline = 0.7
+else:
+    monitor_metric = 'Loss'
+    baseline = 0.1
 callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),
-             ModelCheckpoint(model_dir, 'Loss', verbose=True, save_best=True),
-             #EarlyStoppingSW('Loss', min_delta=1e-5, patience=10, verbose=True, from_epoch=10)
+             ModelCheckpoint(model_dir, monitor_metric, verbose=True, save_best=True),
+             EarlyStoppingSW(monitor_metric, min_delta=1e-5, patience=10, verbose=True, from_epoch=10, baseline=baseline, restore_best_weights=True)
             ]
 
 with Chronostep("getting training and validation data"):
@@ -215,6 +236,16 @@ with Chronostep("getting training and validation data"):
 with Chronostep("training model '{}'".format(model_name)):
     model.fit(training_data, training_labels, validation_data, validation_labels, info, callbacks, **hyperparameters)
 
-# TODO: clean code and apis
-# TODO: speedup script
-# TODO: experiment
+with Chronostep("evaluating model '{}'".format(model_name)):
+    model.eval()
+    train_metrics = model.evaluate(training_data, training_labels, args.batch_size)
+    validation_metrics = model.evaluate(validation_data, validation_labels, args.batch_size)
+    test_metrics = {}
+    if args.test:
+        test_data = test.get_data(args.data_format)
+        test_metrics = model.evaluate(test_data, test_labels, args.batch_size)
+    pprint({
+        "training_metrics": train_metrics,
+        "validation_metrics": validation_metrics,
+        "test_metrics": test_metrics
+    })
