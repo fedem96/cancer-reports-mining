@@ -112,8 +112,8 @@ with Chronostep("encoding reports"):
 
             dataset.compute_lazy()
 
-    # training.limit(1024)
-    # validation.limit(1024)
+    training.limit(1024)
+    validation.limit(1024)
 print(f"number of tokens: {training.tokenizer.num_tokens()}")
 with Chronostep("getting labels"):
     training_labels = training.get_labels()
@@ -248,5 +248,16 @@ with Chronostep("evaluating model '{}'".format(model_name)):
         "validation_metrics": validation_metrics,
         "test_metrics": test_metrics
     }
-    pprint(metrics)
+    pprint(json.loads(str(metrics).replace("'", '"')))
     dump_json(json.loads(str(metrics).replace("'", '"')), os.path.join(model_dir, "metrics.json"))
+    for var in classifications:
+        for set_name, labels, y_pred, dataset in zip(["training", "validation"], [training_labels, validation_labels], [y_pred_train, y_pred_val], [training, validation]):
+            y_true = labels[var].dropna().to_numpy().astype(int)
+            show_confusion_matrix(y_true, y_pred[var](), var + "\n", os.path.join(model_dir, set_name, f"confusion_matrix-{var}.png"))
+            errors = [dataset.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred != y_true)[0].tolist()]
+            dump_json(errors, os.path.join(model_dir, set_name, f"errors-{var}.json"))
+        if args.test:
+            y_true = test_labels[var].dropna().to_numpy().astype(int)
+            show_confusion_matrix(y_true, y_pred_test[var](), var + "\n", os.path.join(model_dir, "test", f"confusion_matrix-{var}.png"))
+            errors = [test.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred_test != y_true)[0].tolist()]
+            dump_json(errors, os.path.join(model_dir, "test", f"errors-{var}.json"))

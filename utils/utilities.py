@@ -121,6 +121,7 @@ def show_confusion_matrix(y_true, y_pred, title=None, output_file=None):  # TODO
     if output_file is None:
         plt.show()
     else:
+        create_if_not_exists(os.path.dirname(output_file))
         plt.savefig(output_file)
         plt.clf()
 
@@ -232,6 +233,7 @@ def to_gpu_if_available(model):
 
 
 def dump_json(object, file_path):
+    create_if_not_exists(os.path.dirname(file_path))
     with open(file_path, "wt") as file:
         json.dump(object, file)
 
@@ -240,3 +242,8 @@ def load_json(file_path):
     with open(file_path, "rt") as file:
         j = json.load(file)
     return j
+
+
+def create_if_not_exists(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
