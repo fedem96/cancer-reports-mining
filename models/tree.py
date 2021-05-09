@@ -58,6 +58,12 @@ class DecisionTree:
         print("to(device) not supported: skipping", file=sys.stderr)
         return self
 
+    def convert(self, data, labels):
+        labels = labels[self.cls_var].values
+        data = sparse_tensor_to_csr_matrix(data)[~np.isnan(labels)]
+        labels = labels[~np.isnan(labels)].to_numpy().astype(int)
+        return data, labels
+
     def fit(self, train_data, train_labels, val_data, val_labels, info, callbacks, **hyperparameters):
         print("starting training of decision tree")
         if self.cls_var is None:
@@ -65,13 +71,7 @@ class DecisionTree:
         if train_data.shape[1] != 1 or val_data.shape[1] != 1:
             raise ValueError("this model does not support multi-instance: you have to concatenate the reports")
 
-        train_labels = train_labels[self.cls_var].values
-        train_data = sparse_tensor_to_csr_matrix(train_data)[~np.isnan(train_labels)]
-        train_labels = train_labels[~np.isnan(train_labels)].to_numpy().astype(int)
-
-        val_labels = val_labels[self.cls_var].values
-        val_data = sparse_tensor_to_csr_matrix(val_data)[~np.isnan(val_labels)]
-        val_labels = val_labels[~np.isnan(val_labels)].to_numpy().astype(int)
+        train_data, train_labels = self.convert(train_data, train_labels)
 
         self.model.fit(train_data, train_labels)
 
@@ -83,19 +83,8 @@ class DecisionTree:
                 traceback.print_stack()
                 print("pdf of the tree not saved", file=sys.stderr)
 
-        print("evaluating train")
-        train_metrics = self.evaluate(train_data, train_labels)
-        print(train_metrics)
-        with open(os.path.join(self.directory, "train_metrics.json"), "wt") as file:
-            json.dump(train_metrics, file)
-
-        print("evaluating val")
-        val_metrics = self.evaluate(val_data, val_labels)
-        print(val_metrics)
-        with open(os.path.join(self.directory, "val_metrics.json"), "wt") as file:
-            json.dump(val_metrics, file)
-
-    def evaluate(self, data, labels):
+    def evaluate(self, data, labels, batch_size=None):
+        data, labels = self.convert(data, labels)
         predictions = self.model.predict(data)
         correct = predictions == labels
         wrong = ~correct
@@ -120,7 +109,7 @@ class DecisionTree:
             "M-recall":    sum([v for k,v in metrics.items() if "recall"    in k]) / len(classes),
             "M-F1":        sum([v for k,v in metrics.items() if "F1"        in k]) / len(classes)
         })
-        return metrics
+        return metrics, {self.cls_var: lambda: predictions}
 
     def save_pdf(self):
         from graphviz import Source

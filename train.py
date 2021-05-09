@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 from importlib import import_module
 from pprint import pprint
 
@@ -47,6 +48,7 @@ parser.add_argument("-opt", "--optimizer", help="name of the optimizer", default
 parser.add_argument("-opta", "--optimizer-args", help="args for the optimizer", default={}, type=json.loads)
 parser.add_argument("-pr", "--pool-reports", help="whether (and how) to pool reports (i.e. aggregate features of reports in the same record)", default=None, type=str, choices=["max"])
 parser.add_argument("-pt", "--pool-tokens", help="how to pool tokens (i.e. aggregate features of tokens in the same report)", default=None, choices=["max"])
+parser.add_argument("-q", "--quick", help="take a small subset of the dataset to do quick trials", default=False, action='store_true')
 parser.add_argument("-rd", "--regressors-dropout", help="dropout before each regressor", default=0, type=float)
 parser.add_argument("-rl2p", "--regressors-l2-penalty", help="l2 penalty for each regressor", default=0, type=float)
 parser.add_argument("-rt", "--reports-transformation", help="how to transform reports (i.e. how to obtain a deep representation of the reports)", default="identity", choices=["identity", "transformer"])
@@ -59,6 +61,9 @@ parser.add_argument("-to", "--training-set-only", help="list of variables to pre
 parser.add_argument("-tr", "--train-regressions", help="list of regressions", default=[], nargs="+", type=str)
 args = parser.parse_args()
 print("args:", vars(args))
+
+if args.quick:
+    print("WARNING: quick mode enabled, results are not reliable", file=sys.stderr)
 
 with Chronostep("reading input"):
     classifications, regressions, anti_classifications, anti_regressions = args.train_classifications, args.train_regressions, args.train_anti_classifications, args.train_anti_regressions
@@ -112,8 +117,9 @@ with Chronostep("encoding reports"):
 
             dataset.compute_lazy()
 
-    training.limit(1024)
-    validation.limit(1024)
+    if args.quick:
+        training.limit(1024)
+        validation.limit(1024)
 print(f"number of tokens: {training.tokenizer.num_tokens()}")
 with Chronostep("getting labels"):
     training_labels = training.get_labels()
@@ -236,7 +242,6 @@ with Chronostep("training model '{}'".format(model_name)):
     model.fit(training_data, training_labels, validation_data, validation_labels, info, callbacks, **hyperparameters)
 
 with Chronostep("evaluating model '{}'".format(model_name)):
-    model.eval()
     train_metrics, y_pred_train = model.evaluate(training_data, training_labels, args.batch_size)
     validation_metrics, y_pred_val = model.evaluate(validation_data, validation_labels, args.batch_size)
     test_metrics = {}
@@ -261,3 +266,6 @@ with Chronostep("evaluating model '{}'".format(model_name)):
             show_confusion_matrix(y_true, y_pred_test[var](), var + "\n", os.path.join(model_dir, "test", f"confusion_matrix-{var}.png"))
             errors = [test.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred_test != y_true)[0].tolist()]
             dump_json(errors, os.path.join(model_dir, "test", f"errors-{var}.json"))
+
+if args.quick:
+    print("WARNING: quick mode was enabled, results are not reliable", file=sys.stderr)
