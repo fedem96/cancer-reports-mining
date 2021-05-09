@@ -112,8 +112,8 @@ with Chronostep("encoding reports"):
 
             dataset.compute_lazy()
 
-    training.limit(1024)
-    validation.limit(1024)
+    # training.limit(1024)
+    # validation.limit(1024)
 print(f"number of tokens: {training.tokenizer.num_tokens()}")
 with Chronostep("getting labels"):
     training_labels = training.get_labels()
@@ -159,8 +159,7 @@ with Chronostep("creating model"):
     model_dir = os.path.join(TRAINED_MODELS_DIR, model_name)
     os.makedirs(model_dir)
 
-    with open(os.path.join(model_dir, "args.json"), "wt") as file:
-        json.dump(vars(args), file)
+    dump_json(vars(args), os.path.join(model_dir, "args.json"))
 
     module, class_name = args.model.rsplit(".", 1)
     Model = getattr(import_module(module), class_name)
@@ -205,8 +204,8 @@ hyperparameters = {
     "activation_penalty": args.activation_penalty, "l2_penalty": args.l2_penalty,
     "classifiers_l2_penalty": args.classifiers_l2_penalty, "regressors_l2_penalty": args.regressors_l2_penalty
 }
-with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
-    json.dump(hyperparameters, file)
+
+dump_json(hyperparameters, os.path.join(model_dir, "hyperparameters.json"))
 
 info = {**{k: v for k, v in vars(args).items() if k in {"data_seed", "net_seed", "filter", "filter_args", "concatenate_reports"
                                                         "model_args", "pool_reports", "pool_tokens"}},
@@ -238,14 +237,16 @@ with Chronostep("training model '{}'".format(model_name)):
 
 with Chronostep("evaluating model '{}'".format(model_name)):
     model.eval()
-    train_metrics = model.evaluate(training_data, training_labels, args.batch_size)
-    validation_metrics = model.evaluate(validation_data, validation_labels, args.batch_size)
+    train_metrics, y_pred_train = model.evaluate(training_data, training_labels, args.batch_size)
+    validation_metrics, y_pred_val = model.evaluate(validation_data, validation_labels, args.batch_size)
     test_metrics = {}
     if args.test:
         test_data = test.get_data(args.data_format)
-        test_metrics = model.evaluate(test_data, test_labels, args.batch_size)
-    pprint({
+        test_metrics, y_pred_test = model.evaluate(test_data, test_labels, args.batch_size)
+    metrics = {
         "training_metrics": train_metrics,
         "validation_metrics": validation_metrics,
         "test_metrics": test_metrics
-    })
+    }
+    pprint(metrics)
+    dump_json(json.loads(str(metrics).replace("'", '"')), os.path.join(model_dir, "metrics.json"))

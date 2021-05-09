@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import datetime
 import random
 import string
@@ -227,3 +229,14 @@ def to_gpu_if_available(model):
     if torch.cuda.is_available():
         return model.to("cuda")
     return model
+
+
+def dump_json(object, file_path):
+    with open(file_path, "wt") as file:
+        json.dump(object, file)
+
+
+def load_json(file_path):
+    with open(file_path, "rt") as file:
+        j = json.load(file)
+    return j

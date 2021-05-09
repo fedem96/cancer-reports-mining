@@ -8,7 +8,7 @@ class Metrics:
                 metric.reset()
 
     def __repr__(self):
-        return self.metrics.__repr__()
+        return self.metrics.__repr__().replace("'", '"')
 
     def __str__(self):
-        return self.metrics.__str__()
+        return self.metrics.__str__().replace("'", '"')

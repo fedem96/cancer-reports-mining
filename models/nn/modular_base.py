@@ -420,7 +420,7 @@ class ModularBase(nn.Module, ABC):
         }
 
     def create_classifications_detailed_metrics(self, tasks):
-        return  {
+        return {
             "Precisions": {t['name'] + "_" + str(cls): Precision(cls) for t in tasks for cls in range(t['num_classes'])},
             "Recalls": {t['name'] + "_" + str(cls): Recall(cls) for t in tasks for cls in range(t['num_classes'])},
             "F1s": {t['name'] + "_" + str(cls): F1Score(cls) for t in tasks for cls in range(t['num_classes'])}
@@ -478,9 +478,10 @@ class ModularBase(nn.Module, ABC):
 
     def evaluate(self, data, labels, batch_size):
         data = self.tensorize(data)
-        metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_detailed_metrics(self.validation_tasks)})
+        metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_detailed_metrics(self.validation_tasks), **self.create_predictions_accumulator()})
         num_batches = (len(data) + batch_size - 1) // batch_size
         for b in range(num_batches):
             batch, batch_labels = self.get_batch(data, labels, range(b * batch_size, min(len(data), (b + 1) * batch_size)))
             self.validation_step(batch, batch_labels, num_batches, metrics.metrics)
-        return metrics.metrics
+        y_pred_dict = metrics.metrics.pop("Predictions")
+        return metrics, y_pred_dict
