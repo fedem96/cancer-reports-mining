@@ -7,6 +7,7 @@ from pprint import pprint
 from callbacks.early_stopping import EarlyStoppingSW
 from callbacks.logger import MetricsLogger
 from callbacks.model_checkpoint import ModelCheckpoint
+from callbacks.restore_weights import RestoreWeights
 from utils.chrono import Chronostep
 from utils.constants import *
 from utils.dataset import Dataset
@@ -15,6 +16,7 @@ from utils.utilities import *
 parser = argparse.ArgumentParser(description='Train a model')
 parser.add_argument("-ap", "--activation-penalty", help="weight for activation (abs) regularization", default=0, type=float)
 parser.add_argument("-b", "--batch-size", help="batch size to use for training", default=128, type=int)
+parser.add_argument("-ba", "--baseline", help="minimum value to reach before early stopping", default=None, type=float)
 parser.add_argument("-cp", "--copy", help="copy columns", default=[], nargs="+", type=str)
 parser.add_argument("-cd", "--classifiers-dropout", help="dropout before each classifier", default=0, type=float)
 parser.add_argument("-cl2p", "--classifiers-l2-penalty", help="l2 penalty for each classifier", default=0, type=float)
@@ -23,6 +25,7 @@ parser.add_argument("-d", "--dataset-dir", help="directory containing the datase
 parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "bag", "tfidf"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=50, type=int)
+parser.add_argument("-es", "--early-stopping", help="whether to enable early stopping", default=False, action='store_true')
 parser.add_argument("-f", "--filter", help="report filtering strategy",
                     default=None, type=str, choices=['same_year', 'classifier'], metavar='STRATEGY')
 parser.add_argument("-fa", "--filter-args", help="args for report filtering strategy", default=None, type=json.loads)
@@ -40,6 +43,7 @@ parser.add_argument("-ma", "--model-args", help="model to train", default=None, 
 parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,5))
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
+parser.add_argument("-mo", "--monitor", help="metric to monitor", default=None, type=str, choices=['Loss', 'Accuracy', 'M-F1', 'CKS'])
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)
 parser.add_argument("-ms", "--max-size", help="maximum size of the records (i.e. maximum reports per record)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
@@ -224,16 +228,12 @@ if args.data_seed is not None:
 # hist([len(ex) for ex in training.get_data(DATA_COL)])
 
 tb_dir = os.path.join(model_dir, "logs")
-if len(regressions) == 0:  # only classifications
-    monitor_metric = 'Accuracy'
-    baseline = 0.7
-else:
-    monitor_metric = 'Loss'
-    baseline = 0.1
-callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10),
-             ModelCheckpoint(model_dir, monitor_metric, verbose=True, save_best=True),
-             EarlyStoppingSW(monitor_metric, min_delta=1e-5, patience=10, verbose=True, from_epoch=10, baseline=baseline, restore_best_weights=True)
-            ]
+callbacks = [MetricsLogger(terminal='table', tensorboard_dir=tb_dir, aim_name=model.__name__, history_size=10)]
+if args.monitor is not None:
+    callbacks.append(ModelCheckpoint(model_dir, args.monitor, verbose=True, save_best=True))
+    if args.early_stopping:
+        callbacks.append(EarlyStoppingSW(args.monitor, min_delta=1e-5, patience=10, verbose=True, from_epoch=10, baseline=args.baseline))
+callbacks.append(RestoreWeights(args.monitor or "Loss", verbose=True))
 
 with Chronostep("getting training and validation data"):
     training_data = training.get_data(args.data_format)

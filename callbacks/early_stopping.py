@@ -1,5 +1,3 @@
-import copy
-
 import numpy as np
 
 from callbacks.base_callback import Callback
@@ -53,7 +51,7 @@ class EarlyStoppingSW(Callback):
         patience: size of the sliding window (number of epochs)
     """
 
-    def __init__(self, monitor='Loss', min_delta=0, patience=0, verbose=False, mode='auto', baseline=None, from_epoch=0, restore_best_weights=False):
+    def __init__(self, monitor='Loss', min_delta=0, patience=0, verbose=False, mode='auto', baseline=None, from_epoch=0):
         super(EarlyStoppingSW, self).__init__()
         self.patience = patience
         self.monitor = monitor
@@ -61,9 +59,6 @@ class EarlyStoppingSW(Callback):
         self.verbose = verbose
         self.baseline = baseline
         self.from_epoch = from_epoch
-        self.restore_best_weights = restore_best_weights
-        self.best_epoch = None
-        self.best_state_dict = None
 
         if mode == 'auto':
             if 'loss' in monitor.lower():
@@ -130,8 +125,6 @@ class EarlyStoppingSW(Callback):
 
         if self.last < self.best:
             self.best = self.last
-            self.best_epoch = epoch
-            self.best_state_dict = copy.deepcopy(model.state_dict())
 
     def on_epoch_end(self, model, epoch):
         pass
@@ -142,10 +135,3 @@ class EarlyStoppingSW(Callback):
             if self.mode == 'max': self.best = -self.best
             if self.verbose:
                 print('Early stop at epoch {:d} with best {} {:.3f}, last {:.3f}' .format(self.stopped_epoch, self.monitor, self.best, self.last))
-        if self.restore_best_weights:
-            if self.best_state_dict is None:
-                print("WARNING: best_state_dict is None, weights not restored")
-            else:
-                if self.verbose:
-                    print(f"restoring best weights from epoch {self.best_epoch}")
-                model.load_state_dict(self.best_state_dict)
