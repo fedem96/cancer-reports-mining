@@ -28,6 +28,7 @@ parser.add_argument("-gb", "--group-by", help="list of (space-separated) groupin
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
 parser.add_argument("-grl", "--gradient-reversal-lambda", help="value of lambda for each Gradient Reversal Layer", default=0.05, type=float)
 parser.add_argument("-ic", "--input-cols", help="list of input columns names", default=["diagnosi", "macroscopia", "notizie"], nargs="+", type=str)
+parser.add_argument("-l2p", "--l2-penalty", help="l2 penalty for weights of the network (predictors excluded)", default=0, type=float)
 parser.add_argument("-lr", "--learning-rate", help="learning rate for Adam optimizer", default=0.00001, type=float)
 parser.add_argument("-lrs", "--learning-rate-scheduler", help="type of learning rate scheduler", default=None, type=str, choices=["StepLR"]) # TODO: complete
 parser.add_argument("-lrsa", "--learning-rate-scheduler-args", help="args for learning rate scheduler", default={}, type=json.loads) # TODO: complete
@@ -186,7 +187,8 @@ for parameter_name, parameter in model.named_parameters():
 
 hyperparameters = {
     "batch_size": args.batch_size, "learning_rate": args.learning_rate, "max_epochs": args.epochs,
-    "activation_penalty": args.activation_penalty, "classifiers_l2_penalty": args.classifiers_l2_penalty, "regressors_l2_penalty": args.regressors_l2_penalty
+    "activation_penalty": args.activation_penalty, "l2_penalty": args.l2_penalty,
+    "classifiers_l2_penalty": args.classifiers_l2_penalty, "regressors_l2_penalty": args.regressors_l2_penalty
 }
 with open(os.path.join(model_dir, "hyperparameters.json"), "wt") as file:
     json.dump(hyperparameters, file)

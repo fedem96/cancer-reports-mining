@@ -204,6 +204,7 @@ class ModularBase(nn.Module, ABC):
 
             batch_size = hyperparams["batch_size"]
             self.activation_penalty = hyperparams["activation_penalty"]
+            self.l2_penalty = hyperparams["l2_penalty"]
             self.classifiers_l2_penalty = hyperparams["classifiers_l2_penalty"]
             self.regressors_l2_penalty = hyperparams["regressors_l2_penalty"]
 
@@ -217,7 +218,7 @@ class ModularBase(nn.Module, ABC):
             else:
                 val_data = val_data.to(self.current_device())
 
-            self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"]) # TODO: get from argparse
+            self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
             num_batches, num_val_batches = len(train_data) // batch_size, len(val_data) // batch_size
             train_metrics = Metrics({**self.create_losses_metrics(self.training_tasks), **self.create_metrics(self.training_tasks), **self.create_grad_norm_metrics()})
@@ -334,10 +335,19 @@ class ModularBase(nn.Module, ABC):
                             if var + "_" + str(cls) in metric:
                                 metric[var + "_" + str(cls)].update(preds.cpu().detach().numpy(), grth.cpu().numpy())
 
-        if self.activation_penalty != 0:
-            regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
+        if self.l2_penalty != 0:
+            l2_regularization_loss = self.l2_penalty * sum(param.norm() for name, param in self.named_parameters() if "predictors" not in name)
             if training:
-                regularization_loss.backward()
+                l2_regularization_loss.backward()
+                new_grad_vector = self.grad_vector()
+                gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
+                gradient_norms["weights_l2"] = gradient_norm
+                metrics["GradNorm"]["weights_l2"].update(gradient_norm, num_batches)
+
+        if self.activation_penalty != 0:
+            activation_regularization_loss = self.activation_penalty * forwarded["features"].abs().sum()
+            if training:
+                activation_regularization_loss.backward()
                 new_grad_vector = self.grad_vector()
                 gradient_norm = (new_grad_vector - old_grad_vector).norm().item()
                 gradient_norms["features_l1"] = gradient_norm
@@ -423,7 +433,7 @@ class ModularBase(nn.Module, ABC):
 
     def create_grad_norm_metrics(self):
         return {
-            "GradNorm": {var: Average(max) for var in list(self.predictors.keys()) + ["features_l1"]}
+            "GradNorm": {var: Average(max) for var in list(self.predictors.keys()) + ["features_l1", "weights_l2"]}
         }
 
     def grad_vector(self):
