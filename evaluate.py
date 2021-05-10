@@ -30,7 +30,7 @@ from utils.utilities import merge_and_extract, to_gpu_if_available, show_confusi
 parser = argparse.ArgumentParser(description='Evaluate a model')
 parser.add_argument("-b", "--batch-size", help="batch size to use when evaluate", default=128, type=int)
 parser.add_argument("-d", "--dataset-dir", help="directory containing the dataset", default=os.path.join(DATASETS_DIR, NEW_DATASET), type=str)
-parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf"])
+parser.add_argument("-df", "--data-format", help="data format to use as input to the model", default="indices", type=str, choices=["indices", "tfidf", "bag"])
 parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling", default=None, type=int)
 # parser.add_argument("-f", "--filter",
 #                     help="report filtering strategy",
