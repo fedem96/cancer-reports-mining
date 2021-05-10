@@ -149,9 +149,9 @@ class Dataset:
             column_name = self.encoded_data_column
         print(data_type)
         if data_type == "indices":
-            return self.get_data_as_tokens_indices(column_name)
+            return self.get_data_as_tokens_indices(column_name).coalesce()
         elif data_type == "bag":
-            data = self.get_data_as_tfidf_vectors(column_name)
+            data = self.get_data_as_tfidf_vectors(column_name).coalesce()
             return torch.sparse_coo_tensor(data.indices(), data.values() > 0, data.shape).int()
         elif data_type == "tfidf":
             return self.get_data_as_tfidf_vectors(column_name)

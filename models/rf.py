@@ -1,22 +1,19 @@
 import sys
 
 import numpy as np
-from sklearn.svm import SVC, LinearSVC
+from sklearn.ensemble import RandomForestClassifier
 
 from utils.convert import sparse_tensor_to_csr_matrix
 
 
-class SVM:
+class RandomForest:
     def __init__(self, vocab_size, preprocessor, tokenizer, labels_codec, *args, **kwargs):
         self.vocab_size = vocab_size
         self.preprocessor = preprocessor
         self.tokenizer = tokenizer
         self.labels_codec = labels_codec
-        self.__name__ = "SVM"
-        if kwargs.get("linear", False):
-            self.model = LinearSVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight", "loss", "penalty", "dual", "max_iter"}})
-        else:
-            self.model = SVC(verbose=True, **{k:v for k,v in kwargs.items() if k in {"C", "class_weight"}})
+        self.__name__ = "DecisionTree"
+        self.model = RandomForestClassifier(n_jobs=4, **{k:v for k,v in kwargs.items() if k in {"n_estimators", "max_depth", "class_weight", "min_samples_split", "min_samples_leaf", "max_features"}})
         self.cls_var = None
         self.directory = kwargs['directory']
 
@@ -62,9 +59,11 @@ class SVM:
         return data, labels
 
     def fit(self, train_data, train_labels, val_data, val_labels, info, callbacks, **hyperparameters):
-        print("starting training of SVM")
+        print("starting training of random forest")
         if self.cls_var is None:
             raise Exception("var not set")
+        if train_data.shape[1] != 1 or val_data.shape[1] != 1:
+            raise ValueError("this model does not support multi-instance: you have to concatenate the reports")
 
         train_data, train_labels = self.convert(train_data, train_labels)
 
