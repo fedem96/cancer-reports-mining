@@ -43,7 +43,7 @@ parser.add_argument("-ma", "--model-args", help="model to train", default=None, 
 parser.add_argument("-ng", "--n-grams", help="n of the n-grams", default=1, type=int, choices=range(1,5))
 parser.add_argument("-ns", "--net-seed", help="seed for model random weights generation", default=None, type=int)
 parser.add_argument("-ml", "--max-length", help="maximum sequence length (cut long sequences)", default=None, type=int)
-parser.add_argument("-mo", "--monitor", help="metric to monitor", default=None, type=str, choices=['Loss', 'Accuracy', 'M-F1', 'CKS'])
+parser.add_argument("-mo", "--monitor", help="metric to monitor", default=None, type=str, choices=['Loss', 'Accuracy', 'F1', 'M-F1', 'CKS'])
 parser.add_argument("-mtl", "--max-total-length", help="maximum sequence length after concatenation (cut long sequences)", default=None, type=int)
 parser.add_argument("-ms", "--max-size", help="maximum size of the records (i.e. maximum reports per record)", default=None, type=int)
 parser.add_argument("-n", "--name", help="name to use when saving the model", default=None, type=str)
