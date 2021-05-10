@@ -139,7 +139,7 @@ regression_metrics = create_regression_metrics(regressions)
 metrics = Metrics({**create_losses(classifications, regressions), **classification_metrics,
                    **regression_metrics, **create_predictions_accumulator(classifications, regressions)})
 
-data = torch.tensor(data.astype(np.int16), device=device)
+data = model.convert(data)
 batch_size = args.batch_size
 num_batches = len(data) // batch_size
 metrics.reset()

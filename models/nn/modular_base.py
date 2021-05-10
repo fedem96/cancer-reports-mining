@@ -209,8 +209,8 @@ class ModularBase(nn.Module, ABC):
             self.classifiers_l2_penalty = hyperparams["classifiers_l2_penalty"]
             self.regressors_l2_penalty = hyperparams["regressors_l2_penalty"]
 
-            train_data = self.tensorize(train_data)
-            val_data = self.tensorize(val_data)
+            train_data = self.convert(train_data)
+            val_data = self.convert(val_data)
 
             self.optimizer = Adam(self.parameters(), lr=hyperparams["learning_rate"])
 
@@ -458,7 +458,7 @@ class ModularBase(nn.Module, ABC):
     def get_validation_regressions(self):
         return [task["name"] for task in self.validation_tasks.values() if "regression" in task["type"]]
 
-    def tensorize(self, data):
+    def convert(self, data):
         if not torch.is_tensor(data):
             return torch.tensor(data.astype(np.int16), device=self.current_device())
             # torch does not have uint16 dtype: be aware that indices in range [32768,65535] will be stored as negative numbers
@@ -477,7 +477,7 @@ class ModularBase(nn.Module, ABC):
         return batch, batch_labels
 
     def evaluate(self, data, labels, batch_size):
-        data = self.tensorize(data)
+        data = self.convert(data)
         metrics = Metrics({**self.create_losses_metrics(self.validation_tasks), **self.create_detailed_metrics(self.validation_tasks), **self.create_predictions_accumulator()})
         num_batches = (len(data) + batch_size - 1) // batch_size
         for b in range(num_batches):
