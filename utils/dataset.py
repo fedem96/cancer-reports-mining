@@ -243,11 +243,16 @@ class Dataset:
             elif type(filter_strat) == str:
                 if filter_strat == "classifier":
                     model = load(filter_args["path"])
-                    model = to_gpu_if_available(model)
-                    model.eval()
+                    if filter_args["path"].endswith("pth"):
+                        model = to_gpu_if_available(model)
+                        model.eval()
                     self.add_encoded_column(model.encode_report, filter_args["encoded_data_column"], filter_args["max_length"])
                 def _same_year(df, *args):
                     return df['anno_referto'].values == df['anno_diagnosi'].values
+                def _past_years(df, *args):
+                    return df['anno_referto'].values <= df['anno_diagnosi'].values
+                def _future_years(df, *args):
+                    return df['anno_referto'].values >= df['anno_diagnosi'].values
                 def _with_classifier(df, fa):
                     encoded_data_column = fa["encoded_data_column"]
                     max_report_length = fa["max_length"] or max([len(report) for report in df[encoded_data_column]])
@@ -263,7 +268,7 @@ class Dataset:
                         filter_result.append( model(batch, pool_reports=False)['sede_icdo3'].argmax(dim=3).squeeze().cpu().numpy().astype(bool) )
                     print("tot_acceptable: {}, tot_unacceptable: {}".format((np.concatenate(filter_result)).sum(), (~np.concatenate(filter_result)).sum()))
                     return np.concatenate(filter_result)
-                filter_dict = {"same_year": _same_year, "classifier": _with_classifier}
+                filter_dict = {"same_year": _same_year, "past_years": _past_years, "future_years": _future_years, "classifier": _with_classifier}
                 filter_fn = filter_dict[filter_strat]
             else:
                 raise ValueError("Invalid filter method")

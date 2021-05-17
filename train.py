@@ -27,7 +27,7 @@ parser.add_argument("-ds", "--data-seed", help="seed for random data shuffling",
 parser.add_argument("-e", "--epochs", help="number of maximum training epochs", default=50, type=int)
 parser.add_argument("-es", "--early-stopping", help="whether to enable early stopping", default=False, action='store_true')
 parser.add_argument("-f", "--filter", help="report filtering strategy",
-                    default=None, type=str, choices=['same_year', 'classifier'], metavar='STRATEGY')
+                    default=None, type=str, choices=['same_year', 'past_years', 'future_years', 'classifier'], metavar='STRATEGY')
 parser.add_argument("-fa", "--filter-args", help="args for report filtering strategy", default=None, type=json.loads)
 parser.add_argument("-gb", "--group-by", help="list of (space-separated) grouping attributes to make multi-report predictions.",
                     default=None, nargs="+", type=str, metavar=('ATTR1', 'ATTR2'))
@@ -255,17 +255,18 @@ with Chronostep("evaluating model '{}'".format(model_name)):
     }
     pprint(json.loads(str(metrics).replace("'", '"')))
     dump_json(json.loads(str(metrics).replace("'", '"')), os.path.join(model_dir, "metrics.json"))
-    for var in classifications:
-        for set_name, labels, y_pred, dataset in zip(["training", "validation"], [training_labels, validation_labels], [y_pred_train, y_pred_val], [training, validation]):
-            y_true = labels[var].dropna().to_numpy().astype(int)
-            show_confusion_matrix(y_true, y_pred[var](), var + "\n", os.path.join(model_dir, set_name, f"confusion_matrix-{var}.png"))
-            errors = [dataset.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred != y_true)[0].tolist()]
-            dump_json(errors, os.path.join(model_dir, set_name, f"errors-{var}.json"))
-        if args.test:
-            y_true = test_labels[var].dropna().to_numpy().astype(int)
-            show_confusion_matrix(y_true, y_pred_test[var](), var + "\n", os.path.join(model_dir, "test", f"confusion_matrix-{var}.png"))
-            errors = [test.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred_test != y_true)[0].tolist()]
-            dump_json(errors, os.path.join(model_dir, "test", f"errors-{var}.json"))
+    if args.dataset_dir == os.path.join(DATASETS_DIR, NEW_DATASET):
+        for var in classifications:
+            for set_name, labels, y_pred, dataset in zip(["training", "validation"], [training_labels, validation_labels], [y_pred_train, y_pred_val], [training, validation]):
+                y_true = labels[var].dropna().to_numpy().astype(int)
+                show_confusion_matrix(y_true, y_pred[var](), var + "\n", os.path.join(model_dir, set_name, f"confusion_matrix-{var}.png"))
+                errors = [dataset.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred != y_true)[0].tolist()]
+                dump_json(errors, os.path.join(model_dir, set_name, f"errors-{var}.json"))
+            if args.test:
+                y_true = test_labels[var].dropna().to_numpy().astype(int)
+                show_confusion_matrix(y_true, y_pred_test[var](), var + "\n", os.path.join(model_dir, "test", f"confusion_matrix-{var}.png"))
+                errors = [test.dataframe[i]['id_paz'].unique().item() for i in np.where(y_pred_test != y_true)[0].tolist()]
+                dump_json(errors, os.path.join(model_dir, "test", f"errors-{var}.json"))
 
 if args.quick:
     print("WARNING: quick mode was enabled, results are not reliable", file=sys.stderr)

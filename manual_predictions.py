@@ -19,13 +19,14 @@ labels_cols = ['tipo_T', 'metastasi', 'modalita_T', 'modalita_N', 'stadio_T', 's
 tokenizer_file_name = f"tokenizer-1gram.json"
 sets = {
     "train": Dataset(dataset_dir, TRAINING_SET, input_cols, tokenizer_file_name),
-    "val": Dataset(dataset_dir, VALIDATION_SET, input_cols, tokenizer_file_name)
+    "val": Dataset(dataset_dir, VALIDATION_SET, input_cols, tokenizer_file_name),
+    "test": Dataset(dataset_dir, TEST_SET, input_cols, tokenizer_file_name)
 }
-training, validation = sets["train"], sets["val"]
+training, validation, test = sets["train"], sets["val"], sets["test"]
 t = training.tokenizer
 p = training.preprocessor
 
-for set_name in ["train", "val"]:
+for set_name in ["train", "val", "test"]:
     dataset = sets[set_name]
     dataset.lazy_group_by('id_paz')
     # if args.filter is not None:
@@ -35,8 +36,10 @@ for set_name in ["train", "val"]:
 
 tr_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in training.dataframe]).reset_index(drop=True)
 val_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in validation.dataframe]).reset_index(drop=True)
+te_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in test.dataframe]).reset_index(drop=True)
 tr_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in training.dataframe])
 val_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in validation.dataframe])
+te_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in test.dataframe])
 
 
 def num_substr(substrs, txts):
@@ -148,6 +151,7 @@ for var in ["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1"
     print("TRAIN: tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(tr_txts, tr_labels, var, predictors[var])))
     print("VAL:   tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(val_txts, val_labels, var, predictors[var])))
     print("TR+VA: tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(tr_txts+val_txts, pd.concat([tr_labels,val_labels]), var, predictors[var])))
+    print("TEST:  tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(te_txts, te_labels, var, predictors[var])))
     print()
 
 

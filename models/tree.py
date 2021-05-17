@@ -21,6 +21,14 @@ class DecisionTree:
         self.model = tree.DecisionTreeClassifier(**{k:v for k,v in kwargs.items() if k in {"max_depth", "class_weight", "min_samples_split", "min_samples_leaf"}})
         self.cls_var = None
         self.directory = kwargs['directory']
+        self.class_names = {
+            "grading": ['Grading: 1', 'Grading: 2', 'Grading: 3'],
+            "stadio_N": ['Stadio N: 0', 'Stadio N: 1', 'Stadio N: 1MI', 'Stadio N: 2', 'Stadio N: 3'],
+            "stadio_T": ['Stadio T: 1', 'Stadio T: 2', 'Stadio T: 3', 'Stadio T: 4', 'Stadio T: IS'],
+            "tipo_T": ['Tipo T: P', 'Tipo T: PY'],
+            "numero_sentinella_asportati": ['Asportati: 1', 'Asportati: 2', 'Asportati: 3', 'Asportati: 4'],
+            "numero_sentinella_positivi": ['Positivi: 0', 'Positivi: 1', 'Positivi: 2']
+        }
 
     def encode_report(self, report):
         return self.tokenizer.tokenize(self.preprocessor.preprocess(report), encode=True)
@@ -110,19 +118,28 @@ class DecisionTree:
         })
         return metrics, {self.cls_var: lambda: predictions}
 
-    def save_pdf(self):
+    def save_pdf(self, show_impurity=False, view=False):
         from graphviz import Source
         print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model)))
-        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
+        g = Source(tree.export_graphviz(self.model, out_file=None, class_names=self.class_names[self.cls_var],
+                                        feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1)),
+                                        impurity=show_impurity))
         g.format = 'pdf'
         g.render(os.path.join(self.directory, "tree"))
 
         prune_duplicate_leaves(self.model)
 
         print(re.sub(r"feature_(\d*)", lambda s: self.tokenizer.decode_token(int(s.group(1))), tree.export_text(self.model))) # after simplification, this print is not accurate
-        g = Source(tree.export_graphviz(self.model, out_file=None, feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1))))
+        g = Source(tree.export_graphviz(self.model, out_file=None, class_names=self.class_names[self.cls_var],
+                                        feature_names=self.tokenizer.decode(range(0, self.tokenizer.num_tokens() + 1)),
+                                        impurity=show_impurity))
+
         g.format = 'pdf'
-        g.render(os.path.join(self.directory, "simplified_tree"))
+        g.source = re.sub(r"samples.*\\n", "", g.source)
+        g.source = re.sub(r"value.*\\n", "", g.source)
+        g.source = re.sub(r"class\s=\s", "", g.source)
+
+        g.render(os.path.join(self.directory, "simplified_tree"), view=view)
 
 
 def is_leaf(inner_tree, index):

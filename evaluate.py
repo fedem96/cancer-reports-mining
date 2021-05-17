@@ -141,13 +141,12 @@ metrics = Metrics({**create_losses(classifications, regressions), **classificati
 
 data = model.convert(data)
 batch_size = args.batch_size
-num_batches = len(data) // batch_size
+num_batches = (len(data) + batch_size - 1) // batch_size
 metrics.reset()
 y_preds = defaultdict(lambda: [])
 with Chronometer("calculating metrics"):
     for b in range(num_batches):
-        batch = data[b * batch_size: (b + 1) * batch_size]
-        batch_labels = labels.iloc[b * batch_size: (b + 1) * batch_size].reset_index()
+        batch, batch_labels = model.get_batch(data, labels, range(b * batch_size, min(len(data), (b + 1) * batch_size)))
         model.step(batch, batch_labels, num_batches, metrics.metrics, False)
 
 pprint(metrics)

@@ -18,3 +18,4 @@ tensorboard~=2.4.1
 transformers~=4.2.1
 torch~=1.6.0
 torchtest~=0.5
+xgboost~=1.4.1

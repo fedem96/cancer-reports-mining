@@ -87,9 +87,8 @@ for column in ["numero_sentinella_asportati", "numero_sentinella_positivi"]:
     df[column] = df[column].astype("Int64")
 
 ''' clean "numero_sentinella_asportati" and "numero_sentinella_positivi" '''
-df.loc[df[df.numero_sentinella_asportati == 0].index, "numero_sentinella_asportati"] = np.NaN
-df.loc[df[df.numero_sentinella_asportati > 8].index, "numero_sentinella_asportati"] = np.NaN
-df.loc[df[df.numero_sentinella_positivi > 5].index, "numero_sentinella_positivi"] = np.NaN
+df.loc[df[df.numero_sentinella_asportati > 10].index, "numero_sentinella_asportati"] = np.NaN
+df.loc[df[df.numero_sentinella_positivi > 10].index, "numero_sentinella_positivi"] = np.NaN
 
 mask_invalid_rows = df.index[(df["numero_sentinella_asportati"].notnull()) &
                              (df["numero_sentinella_positivi"].notnull()) &

@@ -166,7 +166,8 @@ def plot_bars(df, columns, counts_threshold=0, sort_by_index=True, output_file=N
     for col in range(len(columns)):
         r = col // ncol
         c = col % ncol
-        counts = df[columns[col]].dropna().astype(str).value_counts()
+        values_type = int if all([str(v).isnumeric() for v in df[columns[col]].dropna().unique()]) else str
+        counts = df[columns[col]].dropna().astype(values_type).value_counts()
         if sort_by_index:
             counts = counts.sort_index()
 
