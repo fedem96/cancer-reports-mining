@@ -1,27 +1,21 @@
-import os
 import sys
-from pprint import pprint
 
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 
 from utils.convert import sparse_tensor_to_csr_matrix
-from utils.serialization import save
 
 
-class RandomForest:
+class LogisticClassifier:
     def __init__(self, vocab_size, preprocessor, tokenizer, labels_codec, *args, **kwargs):
         self.vocab_size = vocab_size
         self.preprocessor = preprocessor
         self.tokenizer = tokenizer
         self.labels_codec = labels_codec
-        self.__name__ = "RandomForest"
-        self.params = {k:v for k,v in kwargs.items() if k in {"n_estimators", "max_depth", "class_weight", "min_samples_split", "min_samples_leaf", "max_features"}}
-        self.model = RandomForestClassifier(n_jobs=4, **self.params)
+        self.__name__ = "LogisticClassifier"
+        self.model = LogisticRegression(verbose=True, solver='liblinear', penalty='l1', **{k:v for k,v in kwargs.items() if k in {"C", "class_weight", "loss", "penalty", "dual", "max_iter"}})
         self.cls_var = None
         self.directory = kwargs['directory']
-        self.retrain = kwargs.get("retrain", False)
-        self.most_important_features = None
 
     def encode_report(self, report):
         return self.tokenizer.tokenize(self.preprocessor.preprocess(report), encode=True)
@@ -65,36 +59,16 @@ class RandomForest:
         return data, labels
 
     def fit(self, train_data, train_labels, val_data, val_labels, info, callbacks, **hyperparameters):
-        print("starting training of random forest")
+        print("starting training of SVM")
         if self.cls_var is None:
             raise Exception("var not set")
-        if train_data.shape[1] != 1 or val_data.shape[1] != 1:
-            raise ValueError("this model does not support multi-instance: you have to concatenate the reports")
 
         train_data, train_labels = self.convert(train_data, train_labels)
 
         self.model.fit(train_data, train_labels)
 
-        pprint(self.top_features(40))
-
-        if self.retrain:
-            self.most_important_features = np.array(list(map(lambda t: t[0], self.top_features(train_data.shape[1]//200)))) # top 10% features
-            train_data_if = train_data[:, self.most_important_features]
-
-            self.params['max_features'] = "auto"
-            self.model = RandomForestClassifier(n_jobs=4, **self.params)
-
-            self.model.fit(train_data_if, train_labels)
-
-        save(self.model, os.path.join(self.directory, "model.pkl"))
-
-    def top_features(self, n):
-        return list(map(lambda t: (t[0], self.tokenizer.decode_token(t[0]), t[1]), sorted(enumerate(self.model.feature_importances_), key=lambda t: t[1], reverse=True)[:n]))
-
     def evaluate(self, data, labels, batch_size=None):
         data, labels = self.convert(data, labels)
-        if self.most_important_features is not None:
-            data = data[:, self.most_important_features]
         predictions = self.model.predict(data)
         correct = predictions == labels
         wrong = ~correct

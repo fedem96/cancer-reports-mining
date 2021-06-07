@@ -10,6 +10,7 @@ from utils.dataset import Dataset
 
 parser = argparse.ArgumentParser(description='Manually predict the variables that require finding a number in the text')
 parser.add_argument("-ps", "--print-samples", help="whether to print samples or not, in the end", default=False, action="store_true")
+parser.add_argument("-te", "--test", help="whether to evaluate the metrics on the test set", default=False, action='store_true')
 args = parser.parse_args()
 
 dataset_dir = os.path.join(DATASETS_DIR, NEW_DATASET)
@@ -27,6 +28,8 @@ t = training.tokenizer
 p = training.preprocessor
 
 for set_name in ["train", "val", "test"]:
+    if set_name == "test" and not args.test:
+        continue
     dataset = sets[set_name]
     dataset.lazy_group_by('id_paz')
     # if args.filter is not None:
@@ -36,10 +39,12 @@ for set_name in ["train", "val", "test"]:
 
 tr_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in training.dataframe]).reset_index(drop=True)
 val_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in validation.dataframe]).reset_index(drop=True)
-te_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in test.dataframe]).reset_index(drop=True)
 tr_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in training.dataframe])
 val_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in validation.dataframe])
-te_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in test.dataframe])
+
+if args.test:
+    te_labels = pd.concat([df.loc[:,labels_cols].head(1) for df in test.dataframe]).reset_index(drop=True)
+    te_txts = p.preprocess_batch([" ".join(df.loc[:,input_cols].values.flatten().tolist()) for df in test.dataframe])
 
 
 def num_substr(substrs, txts):
@@ -73,12 +78,15 @@ def extract_value(r, value_regex, stop_regex):
     result = re.search(value_regex, r[:end])
     if result is None:
         return None
-    return int(result.group(1))
+    return float(result.group(1).replace(",", ".").replace(" ", ""))
 
 
 def predict(markers, s, value_regex, stop_regex, context):
     for marker in markers:
-        results = search_after(marker, s, context)
+        if type(context) == int:
+            results = search_after(marker, s, context)
+        else:
+            results = search_context(marker, s, context)
         values = list(
             filter(
                 lambda v: v is not None,
@@ -137,21 +145,43 @@ def predict_mib1(s):
     return predict(markers, s, value_regex, stop_regex,60)
 
 
+def predict_dimensioni(s):
+    s = re.sub("\d?\d?\d\s%", "", s)  # remove percentages
+    s = re.sub(r"(\d) , (\d)", r"\1.\2", s)
+    s = re.sub(r"(\d) . (\d)", r"\1.\2", s)
+    s = s.replace("diametro massimo ", "diametro ").replace("diametro di ", "diametro ")
+    s = re.sub(r"(\d?\d?\d(\.\d)?) x (\d?\d?\d(\.\d)?) x (\d?\d?\d(\.\d)?)", lambda s: max(s.group(1), s.group(2), s.group(3)), s)
+    predictions = []
+    for value_regex in [r"(\d?\d?\d)\smm", r"mm\s(\d?\d?\d)", r"(\d?\d?\d(\.\d)?)\scm", r"cm\s(\d?\d?\d(\.\d)?)"]:
+        markers = [" diametro ", " dimensioni ", " neoplasi(a|e)? ", " carcinoma ", " neoformazione "]
+        # stop_regex = r"cerb|pgr|\ser\s|progest|estrog|ki67|distanza|mib1|margin(e|i)"
+        stop_regex = "XXX"
+        prediction = predict(markers, s, value_regex, stop_regex,(0,10))
+        if prediction is not None:
+            if "cm" in value_regex:
+                prediction *= 10
+            predictions.append(prediction)
+    if len(predictions) > 0:
+        return max(predictions)
+
+
 # TODO: find good default values for predictors by examining distribution when they do not find any marker
 predictors = {
     "recettori_estrogeni": predict_er,
     "recettori_progestin": predict_pgr,
     "ki67": predict_ki67,
     "cerb": predict_cerb,
-    "mib1": predict_mib1
+    "mib1": predict_mib1,
+    "dimensioni": predict_dimensioni
 }
 
-for var in ["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1"]:
+for var in ["recettori_estrogeni", "recettori_progestin", "ki67", "cerb", "mib1", "dimensioni"]:
     print(var.upper())
     print("TRAIN: tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(tr_txts, tr_labels, var, predictors[var])))
     print("VAL:   tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(val_txts, val_labels, var, predictors[var])))
     print("TR+VA: tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(tr_txts+val_txts, pd.concat([tr_labels,val_labels]), var, predictors[var])))
-    print("TEST:  tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(te_txts, te_labels, var, predictors[var])))
+    if args.test:
+        print("TEST:  tot accuracy: {:.4f}, accuracy on predicted: {:.4f}, predicted/tot: {:.4f}, predicted: {}, tot: {}".format(*evaluate(te_txts, te_labels, var, predictors[var])))
     print()
 
 

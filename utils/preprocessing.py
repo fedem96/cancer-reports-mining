@@ -69,6 +69,14 @@ class Preprocessor:
         # mib1: make the same token
         text = re.sub("\smib?\s?-?\s?1", " mib1 ", text)
 
+        # dimensioni
+        text = re.sub("millimetr(i|o)", " mm ", text)
+        text = re.sub("centimetr(i|o)", " cm ", text)
+        text = re.sub(r"cm(\d)", r" cm \1 ", text)
+        text = re.sub(r"(\d)cm", r" \1 cm ", text)
+        text = re.sub(r"mm(\d)", r" mm \1 ", text)
+        text = re.sub(r"(\d)mm", r" \1 mm ", text)
+
         text = re.sub("\s{2,}", " ", text)  # remove (again) double whitespaces
 
         # TODO: handle numeric strings?
